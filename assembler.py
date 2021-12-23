@@ -7,6 +7,7 @@ FMT_2OP = 0
 FMT_JMP = 1
 FMT_MEM = 2
 FMT_IMM = 3
+FMT_PSEUDO = 4
 
 ops = {
     "add":  (FMT_2OP, 0b0000),
@@ -99,6 +100,21 @@ def parse_imm(imm):
         return int(imm[2:], 2)
     elif imm.startswith("0o"):
         return int(imm[2:], 8)
+    elif imm.startswith("'"):
+        if len(imm) == 3 and imm[2] == "'":
+            return ord(imm[1])
+        elif len(imm) == 4 and imm[3] == "'" and imm[1] == "\\":
+            ch = imm[2]
+            if ch == "t":
+                return ord("\t")
+            elif ch == "n":
+                return ord("\n")
+            elif ch == "0":
+                return 0
+            else:
+                raise AsmError("Invalid character literal escape sequence")
+        else:
+            raise AsmError("Invalid character literal")
     else:
         return int(imm)
 
@@ -108,31 +124,30 @@ def make_fmt_r(opcode, dbit, reg):
 def make_fmt_i(opcode, imm):
     return opcode << 4 | imm
 
-def assemble_line(line):
-    parts = list(map(lambda x: x.lower(), line.split()))
-    if len(parts) == 0:
-        raise AsmError("Empty line")
-    if parts[0] not in ops:
+def argcount(parts, n):
+    if len(parts) - 1 != n:
+        raise AsmError(
+            "Operation " + parts[0] + " expected " +
+            n + " arguments, got " + len(parts) - 1)
+
+def assemble_line(parts):
+    iname = parts[0]
+
+    if iname not in ops:
         raise AsmError("Unknown operation: " + parts[0])
 
-    def argcount(n):
-        if len(parts) - 1 != n:
-            raise AsmError(
-                "Operation " + parts[0] + " expected " +
-                n + " arguments, got " + len(parts) - 1)
-
-    op = ops[parts[0]]
+    op = ops[iname]
     opfmt = op[0]
     opcode = op[1]
     if opfmt == FMT_2OP:
-        argcount(2)
+        argcount(parts, 2)
         dbit, reg = parse_pair(parts[1], parts[2])
         return make_fmt_r(opcode, dbit, reg)
     elif opfmt == FMT_JMP:
-        argcount(0)
+        argcount(parts, 0)
         return make_fmt_r(opcode, op[2], reg)
     elif opfmt == FMT_MEM:
-        argcount(1)
+        argcount(parts, 1)
         reg = parse_reg(parts[1])
         return make_fmt_r(opcode, op[2], reg)
     elif opfmt == FMT_IMM:
@@ -151,9 +166,34 @@ def iter_lines(lines):
             yield linenum, line
         linenum += 1
 
+def split_line(line):
+    # This is what happens when you're too lazy to write a proper lexer
+    xparts = line.split("' '")
+    parts = []
+    for xpart in xparts:
+        for part in xpart.split():
+            parts.append(part)
+        parts.append("' '")
+    parts.pop()
+    return parts
+
 def assemble(lines):
     for linenum, line in iter_lines(lines):
-        yield assemble_line(line)
+        parts = split_line(line)
+        if len(parts) == 0:
+            raise AsmError("Empty line")
+
+        iname = parts[0]
+        if iname == ".byte":
+            argcount(parts, 1)
+            yield parse_imm(parts[1])
+        elif iname == ".zero":
+            argcount(parts, 1)
+            count = parse_imm(parts[1])
+            for i in range(0, count):
+                yield 0
+        else:
+            yield assemble_line(parts)
 
 if __name__ == "__main__":
     infile = sys.stdin
