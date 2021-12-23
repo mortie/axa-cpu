@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
 import sys
+import os
 
 FMT_2OP = 0
-FMT_1OP = 1
+FMT_JMP = 1
+FMT_MEM = 2
 FMT_IMM = 3
-FMT_SMEM = 4
-FMT_DMEM = 5
 
 ops = {
     "add":  (FMT_2OP, 0b0000),
@@ -17,14 +17,27 @@ ops = {
     "mov":  (FMT_2OP, 0b0101),
     "shr":  (FMT_2OP, 0b0110),
     "cmp":  (FMT_2OP, 0b0111),
-    "call": (FMT_1OP, 0b1000),
-    "b":    (FMT_1OP, 0b1001),
-    "beq":  (FMT_1OP, 0b1010),
-    "blt":  (FMT_1OP, 0b1011),
-    "lds":  (FMT_SMEM, 0b1100),
-    "sts":  (FMT_SMEM, 0b1101),
-    "ldd":  (FMT_DMEM, 0b1100),
-    "std":  (FMT_DMEM, 0b1101),
+    "addc": (FMT_2OP, 0b1000),
+    "shrc": (FMT_2OP, 0b1001),
+    "cmpc": (FMT_2OP, 0b1010),
+    "jmp":  (FMT_JMP, 0b1011, 0b0000),
+    "call": (FMT_JMP, 0b1011, 0b0001),
+    "b":    (FMT_JMP, 0b1011, 0b0010),
+    "beq":  (FMT_JMP, 0b1011, 0b0011),
+    "bgt":  (FMT_JMP, 0b1011, 0b0100),
+    "bge":  (FMT_JMP, 0b1011, 0b0101),
+    "bgts": (FMT_JMP, 0b1011, 0b0110),
+    "bges": (FMT_JMP, 0b1011, 0b0111),
+    "bb":   (FMT_JMP, 0b1011, 0b1010),
+    "bbeq": (FMT_JMP, 0b1011, 0b1011),
+    "bbgt": (FMT_JMP, 0b1011, 0b1100),
+    "bbge": (FMT_JMP, 0b1011, 0b1101),
+    "bbgts":(FMT_JMP, 0b1011, 0b1110),
+    "bbges":(FMT_JMP, 0b1011, 0b1111),
+    "lds":  (FMT_MEM, 0b1100, 0),
+    "sts":  (FMT_MEM, 0b1101, 0),
+    "ldd":  (FMT_MEM, 0b1100, 1),
+    "std":  (FMT_MEM, 0b1101, 1),
     "imml": (FMT_IMM, 0b1110),
     "immh": (FMT_IMM, 0b1111),
 }
@@ -108,25 +121,21 @@ def assemble_line(line):
                 "Operation " + parts[0] + " expected " +
                 n + " arguments, got " + len(parts) - 1)
 
-    opfmt, opcode = ops[parts[0]]
+    op = ops[parts[0]]
+    opfmt = op[0]
+    opcode = op[1]
     if opfmt == FMT_2OP:
         argcount(2)
         dbit, reg = parse_pair(parts[1], parts[2])
         return make_fmt_r(opcode, dbit, reg)
-    elif opfmt == FMT_1OP:
-        argcount(1)
-        dbit, reg = parse_source(parts[1])
-        return make_fmt_r(opcode, dbit, reg)
-    elif opfmt == FMT_SMEM:
-        argcount(1)
-        reg = parse_reg(parts[1])
-        return make_fmt_r(opcode, 0, reg)
-    elif opfmt == FMT_DMEM:
+    elif opfmt == FMT_JMP:
+        argcount(0)
+        return make_fmt_r(opcode, op[2], reg)
+    elif opfmt == FMT_MEM:
         argcount(1)
         reg = parse_reg(parts[1])
-        return make_fmt_r(opcode, 1, reg)
+        return make_fmt_r(opcode, op[2], reg)
     elif opfmt == FMT_IMM:
-        argcount(1)
         imm = parse_imm(parts[1])
         if opcode == ops["imml"][1]:
             imm = imm & 0x0f
@@ -147,11 +156,20 @@ def assemble(lines):
         yield assemble_line(line)
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: " + sys.argv[0] + " <infile> <outfile>")
+    infile = sys.stdin
+    outfile = sys.stdout.buffer
+
+    if len(sys.argv) > 1:
+        infile = open(sys.argv[1])
+    if len(sys.argv) > 2:
+        outfile = open(sys.argv[2], "wb")
+    if len(sys.argv) > 3:
+        print("Usage: " + sys.argv[0] + " [infile] [outfile]")
         exit(1)
 
-    with open(sys.argv[1]) as infile:
-        with open(sys.argv[2], "wb") as outfile:
-            for instr in assemble(infile):
-                outfile.write(bytes([instr]))
+    if os.isatty(outfile.fileno()):
+        print("Refusing to output binary data to a TTY.")
+        exit(1)
+
+    for instr in assemble(infile):
+        outfile.write(bytes([instr]))
