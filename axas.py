@@ -7,7 +7,6 @@ FMT_2OP = 0
 FMT_JMP = 1
 FMT_MEM = 2
 FMT_IMM = 3
-FMT_PSEUDO = 4
 
 ops = {
     "add":  (FMT_2OP, 0b0000),
