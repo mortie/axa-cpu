@@ -103,11 +103,11 @@ impl fmt::Display for ImmOp {
 }
 
 pub enum Instr {
-    FmtReg(RegOp, bool, Reg),
-    FmtJmp(JmpOp, bool),
-    FmtBranch(BranchOp, bool),
-    FmtMem(MemOp, bool, Reg),
-    FmtImm(ImmOp, u8),
+    Reg(RegOp, bool, Reg),
+    Jmp(JmpOp, bool),
+    Branch(BranchOp, bool),
+    Mem(MemOp, bool, Reg),
+    Imm(ImmOp, u8),
 }
 
 impl Instr {
@@ -130,39 +130,39 @@ impl Instr {
         };
 
         match op {
-            0b0000 => Instr::FmtReg(RegOp::Add, dbit, reg),
-            0b0001 => Instr::FmtReg(RegOp::Sub, dbit, reg),
-            0b0010 => Instr::FmtReg(RegOp::Xor, dbit, reg),
-            0b0011 => Instr::FmtReg(RegOp::And, dbit, reg),
-            0b0100 => Instr::FmtReg(RegOp::Or,  dbit, reg),
-            0b0101 => Instr::FmtReg(RegOp::Mov, dbit, reg),
-            0b0110 => Instr::FmtReg(RegOp::Shr, dbit, reg),
-            0b0111 => Instr::FmtReg(RegOp::Cmp, dbit, reg),
-            0b1000 => Instr::FmtReg(RegOp::Addc, dbit, reg),
-            0b1001 => Instr::FmtReg(RegOp::Shrc, dbit, reg),
-            0b1010 => Instr::FmtReg(RegOp::Cmpc, dbit, reg),
+            0b0000 => Instr::Reg(RegOp::Add, dbit, reg),
+            0b0001 => Instr::Reg(RegOp::Sub, dbit, reg),
+            0b0010 => Instr::Reg(RegOp::Xor, dbit, reg),
+            0b0011 => Instr::Reg(RegOp::And, dbit, reg),
+            0b0100 => Instr::Reg(RegOp::Or,  dbit, reg),
+            0b0101 => Instr::Reg(RegOp::Mov, dbit, reg),
+            0b0110 => Instr::Reg(RegOp::Shr, dbit, reg),
+            0b0111 => Instr::Reg(RegOp::Cmp, dbit, reg),
+            0b1000 => Instr::Reg(RegOp::Addc, dbit, reg),
+            0b1001 => Instr::Reg(RegOp::Shrc, dbit, reg),
+            0b1010 => Instr::Reg(RegOp::Cmpc, dbit, reg),
             0b1011 => match regbits {
-                0b000 => Instr::FmtJmp(JmpOp::Jmp, dbit),
-                0b001 => Instr::FmtJmp(JmpOp::Call, dbit),
-                0b010 => Instr::FmtBranch(BranchOp::B, dbit),
-                0b011 => Instr::FmtBranch(BranchOp::Beq, dbit),
-                0b100 => Instr::FmtBranch(BranchOp::Bgt, dbit),
-                0b101 => Instr::FmtBranch(BranchOp::Bge, dbit),
-                0b110 => Instr::FmtBranch(BranchOp::Bgts, dbit),
-                0b111 => Instr::FmtBranch(BranchOp::Bges, dbit),
+                0b000 => Instr::Jmp(JmpOp::Jmp, dbit),
+                0b001 => Instr::Jmp(JmpOp::Call, dbit),
+                0b010 => Instr::Branch(BranchOp::B, dbit),
+                0b011 => Instr::Branch(BranchOp::Beq, dbit),
+                0b100 => Instr::Branch(BranchOp::Bgt, dbit),
+                0b101 => Instr::Branch(BranchOp::Bge, dbit),
+                0b110 => Instr::Branch(BranchOp::Bgts, dbit),
+                0b111 => Instr::Branch(BranchOp::Bges, dbit),
                 _ => panic!("Illegal jump condition"),
             },
-            0b1100 => Instr::FmtMem(MemOp::Ld, dbit, reg),
-            0b1101 => Instr::FmtMem(MemOp::St, dbit, reg),
-            0b1110 => Instr::FmtImm(ImmOp::Imml, imm),
-            0b1111 => Instr::FmtImm(ImmOp::Immh, imm),
+            0b1100 => Instr::Mem(MemOp::Ld, dbit, reg),
+            0b1101 => Instr::Mem(MemOp::St, dbit, reg),
+            0b1110 => Instr::Imm(ImmOp::Imml, imm),
+            0b1111 => Instr::Imm(ImmOp::Immh, imm),
             _ => panic!("Illegal op"),
         }
     }
 
     pub fn format(self) -> u8 {
         match self {
-            Instr::FmtReg(op, dbit, reg) => {
+            Instr::Reg(op, dbit, reg) => {
                 let opcode = match op {
                     RegOp::Add => 0b0000,
                     RegOp::Sub => 0b0001,
@@ -179,11 +179,11 @@ impl Instr {
 
                 (opcode as u8) << 4 | (dbit as u8) << 3 | (reg as u8)
             },
-            Instr::FmtJmp(op, dbit) =>
+            Instr::Jmp(op, dbit) =>
                 0b1011_0000 | (dbit as u8) << 3 | (op as u8),
-            Instr::FmtBranch(op, dbit) =>
+            Instr::Branch(op, dbit) =>
                 0b1011_0000 | (dbit as u8) << 3 | (op as u8),
-            Instr::FmtMem(op, dbit, reg) => {
+            Instr::Mem(op, dbit, reg) => {
                 let opcode = match op {
                     MemOp::Ld => 0b1100,
                     MemOp::St => 0b1101,
@@ -191,7 +191,7 @@ impl Instr {
 
                 (opcode as u8) << 4 | (dbit as u8) << 3 | (reg as u8)
             },
-            Instr::FmtImm(op, imm) => match op {
+            Instr::Imm(op, imm) => match op {
                 ImmOp::Imml => 0b1110_0000 | (imm & 0x0f),
                 ImmOp::Immh => 0b1111_0000 | ((imm & 0xf0) >> 4),
             },
@@ -202,20 +202,20 @@ impl Instr {
 impl fmt::Display for Instr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Instr::FmtReg(op, dbit, reg) => match dbit {
+            Instr::Reg(op, dbit, reg) => match dbit {
                 true => write!(f, "{} acc {}", op, reg),
                 false => write!(f, "{} {} acc", op, reg),
             },
-            Instr::FmtJmp(op, _sbit) => write!(f, "{}", op),
-            Instr::FmtBranch(op, sbit) => match sbit {
+            Instr::Jmp(op, _sbit) => write!(f, "{}", op),
+            Instr::Branch(op, sbit) => match sbit {
                 true => write!(f, "b{}", op),
                 false => write!(f, "{}", op),
             },
-            Instr::FmtMem(op, dbit, reg) => match dbit {
+            Instr::Mem(op, dbit, reg) => match dbit {
                 true => write!(f, "{}d {}", op, reg),
                 false => write!(f, "{}s {}", op, reg),
             },
-            Instr::FmtImm(op, imm) => match op {
+            Instr::Imm(op, imm) => match op {
                 ImmOp::Imml => write!(f, "imml 0x{:02x}", imm),
                 ImmOp::Immh => write!(f, "immh 0x{:02x}", imm << 4),
             },

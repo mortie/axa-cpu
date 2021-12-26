@@ -67,7 +67,7 @@ impl<'a> Emulator<'a> {
 
     pub fn exec(&mut self, instr: isa::Instr) {
         match instr {
-            isa::Instr::FmtReg(op, dbit, reg) => {
+            isa::Instr::Reg(op, dbit, reg) => {
                 let s: u16;
                 let d: u16;
                 let res: u16;
@@ -147,7 +147,7 @@ impl<'a> Emulator<'a> {
 
                 self.iptr += 1;
             },
-            isa::Instr::FmtJmp(op, sbit) => {
+            isa::Instr::Jmp(op, sbit) => {
                 let acc = match sbit {
                     false => self.acc as u16,
                     true => (self.acc | 0x80) as u16,
@@ -163,7 +163,7 @@ impl<'a> Emulator<'a> {
 
                 self.iptr = dest;
             },
-            isa::Instr::FmtBranch(op, sbit) => {
+            isa::Instr::Branch(op, sbit) => {
                 let offset = match sbit {
                     false => self.acc as u16,
                     true => (self.acc as u16) | 0xff80,
@@ -184,7 +184,7 @@ impl<'a> Emulator<'a> {
                     self.iptr += 1;
                 }
             },
-            isa::Instr::FmtMem(op, dbit, reg) => {
+            isa::Instr::Mem(op, dbit, reg) => {
                 let addr = match dbit {
                     true =>
                         (self.regs[isa::Reg::DS as usize] as u16) << 8 |
@@ -203,7 +203,7 @@ impl<'a> Emulator<'a> {
 
                 self.iptr += 1;
             },
-            isa::Instr::FmtImm(op, imm) => {
+            isa::Instr::Imm(op, imm) => {
                 match op {
                     isa::ImmOp::Imml => {
                         self.acc = imm;

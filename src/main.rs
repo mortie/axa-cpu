@@ -95,12 +95,12 @@ fn main() -> Result<(), Box<io::Error>> {
     let mut emu = emulator::Emulator::new();
 
     let mut ram = RamBlock::new(1024);
-    ram.data[0] = Instr::FmtImm(ImmOp::Imml, 0x01).format();
-    ram.data[1] = Instr::FmtReg(RegOp::Mov, false, Reg::A1).format();
-    ram.data[2] = Instr::FmtImm(ImmOp::Imml, 0xff).format();
-    ram.data[3] = Instr::FmtImm(ImmOp::Immh, 0xff).format();
-    ram.data[4] = Instr::FmtReg(RegOp::Mov, false, Reg::DS).format();
-    ram.data[5] = Instr::FmtMem(MemOp::St, true, Reg::A1).format();
+    ram.data[0] = Instr::Imm(ImmOp::Imml, 0x01).format();
+    ram.data[1] = Instr::Reg(RegOp::Mov, false, Reg::A1).format();
+    ram.data[2] = Instr::Imm(ImmOp::Imml, 0xff).format();
+    ram.data[3] = Instr::Imm(ImmOp::Immh, 0xff).format();
+    ram.data[4] = Instr::Reg(RegOp::Mov, false, Reg::DS).format();
+    ram.data[5] = Instr::Mem(MemOp::St, true, Reg::A1).format();
     emu.map_memory(0, 1024, &mut ram);
 
     let mut display = DisplayBlock::new();
