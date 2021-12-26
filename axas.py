@@ -92,7 +92,10 @@ def parse_reg(reg):
     else:
         raise AsmError("Invalid register: " + src)
 
-def parse_imm(imm):
+def parse_imm(defines, imm):
+    if imm.startswith("-"):
+        return -parse_imm(defines, imm[1:])
+
     if imm.startswith("0x"):
         return int(imm[2:], 16)
     elif imm.startswith("0b"):
@@ -111,11 +114,15 @@ def parse_imm(imm):
             elif ch == "0":
                 return 0
             else:
-                raise AsmError("Invalid character literal escape sequence")
+                raise AsmError("Invalid character literal escape sequence: " + imm)
         else:
-            raise AsmError("Invalid character literal")
-    else:
+            raise AsmError("Invalid character literal: " + imm)
+    elif imm.isnumeric():
         return int(imm)
+    elif imm in defines:
+        return defines[imm]
+    else:
+        raise AsmError("Invalid immediate: " + imm)
 
 def make_fmt_r(opcode, dbit, reg):
     return opcode << 4 | dbit << 3 | reg
@@ -129,7 +136,7 @@ def argcount(parts, n):
             "Operation " + parts[0] + " expected " +
             n + " arguments, got " + len(parts) - 1)
 
-def assemble_line(parts):
+def assemble_line(defines, parts):
     iname = parts[0]
 
     if iname not in ops:
@@ -144,13 +151,14 @@ def assemble_line(parts):
         return make_fmt_r(opcode, dbit, reg)
     elif opfmt == FMT_JMP:
         argcount(parts, 0)
-        return make_fmt_r(opcode, op[2], reg)
+        lowbits = op[2]
+        return opcode << 4 | lowbits
     elif opfmt == FMT_MEM:
         argcount(parts, 1)
         reg = parse_reg(parts[1])
         return make_fmt_r(opcode, op[2], reg)
     elif opfmt == FMT_IMM:
-        imm = parse_imm(parts[1])
+        imm = parse_imm(defines, parts[1])
         if opcode == ops["imml"][1]:
             imm = imm & 0x0f
         else:
@@ -177,6 +185,8 @@ def split_line(line):
     return parts
 
 def assemble(lines):
+    defines = {}
+    iptr = 0
     for linenum, line in iter_lines(lines):
         parts = split_line(line)
         if len(parts) == 0:
@@ -185,14 +195,26 @@ def assemble(lines):
         iname = parts[0]
         if iname == ".byte":
             argcount(parts, 1)
-            yield parse_imm(parts[1])
+            iptr += 1
+            yield parse_imm(defines, parts[1])
         elif iname == ".zero":
             argcount(parts, 1)
-            count = parse_imm(parts[1])
+            count = parse_imm(defines, parts[1])
             for i in range(0, count):
+                iptr += 1
                 yield 0
+        elif iname == ".align":
+            argcount(parts, 1)
+            align = parse_imm(defines, parts[1])
+            while iptr % align != 0:
+                iptr += 1
+                yield 0
+        elif iname == ".def":
+            argcount(parts, 2)
+            defines[parts[1]] = parse_imm(defines, parts[2])
         else:
-            yield assemble_line(parts)
+            iptr += 1
+            yield assemble_line(defines, parts)
 
 if __name__ == "__main__":
     infile = sys.stdin
