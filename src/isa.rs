@@ -2,8 +2,14 @@ use std::fmt;
 
 #[derive(Clone, Copy)]
 pub enum Reg {
-    CS = 0, DS = 1, SP = 2, RV = 3,
-    A1 = 4, A2 = 5, A3 = 6, RA = 7,
+    CS = 0,
+    DS = 1,
+    SP = 2,
+    RV = 3,
+    A1 = 4,
+    A2 = 5,
+    A3 = 6,
+    RA = 7,
 }
 
 impl fmt::Display for Reg {
@@ -22,9 +28,17 @@ impl fmt::Display for Reg {
 }
 
 pub enum RegOp {
-    Add, Sub, Xor, And,
-    Or, Mov, Shr, Cmp,
-    Addc, Shrc, Cmpc,
+    Add,
+    Sub,
+    Xor,
+    And,
+    Or,
+    Mov,
+    Shr,
+    Cmp,
+    Addc,
+    Shrc,
+    Cmpc,
 }
 
 impl fmt::Display for RegOp {
@@ -46,7 +60,8 @@ impl fmt::Display for RegOp {
 }
 
 pub enum JmpOp {
-    Jmp = 0b000, Call = 0b001,
+    Jmp = 0b000,
+    Call = 0b001,
 }
 
 impl fmt::Display for JmpOp {
@@ -59,8 +74,12 @@ impl fmt::Display for JmpOp {
 }
 
 pub enum BranchOp {
-    B = 0b010, Beq = 0b011, Bgt = 0b100,
-    Bge = 0b101, Bgts = 0b110, Bges = 0b111,
+    B = 0b010,
+    Beq = 0b011,
+    Bgt = 0b100,
+    Bge = 0b101,
+    Bgts = 0b110,
+    Bges = 0b111,
 }
 
 impl fmt::Display for BranchOp {
@@ -77,7 +96,8 @@ impl fmt::Display for BranchOp {
 }
 
 pub enum MemOp {
-    Ld, St,
+    Ld,
+    St,
 }
 
 impl fmt::Display for MemOp {
@@ -90,7 +110,8 @@ impl fmt::Display for MemOp {
 }
 
 pub enum ImmOp {
-    Imml, Immh,
+    Imml,
+    Immh,
 }
 
 impl fmt::Display for ImmOp {
@@ -134,7 +155,7 @@ impl Instr {
             0b0001 => Instr::Reg(RegOp::Sub, dbit, reg),
             0b0010 => Instr::Reg(RegOp::Xor, dbit, reg),
             0b0011 => Instr::Reg(RegOp::And, dbit, reg),
-            0b0100 => Instr::Reg(RegOp::Or,  dbit, reg),
+            0b0100 => Instr::Reg(RegOp::Or, dbit, reg),
             0b0101 => Instr::Reg(RegOp::Mov, dbit, reg),
             0b0110 => Instr::Reg(RegOp::Shr, dbit, reg),
             0b0111 => Instr::Reg(RegOp::Cmp, dbit, reg),
@@ -178,11 +199,9 @@ impl Instr {
                 };
 
                 (opcode as u8) << 4 | (dbit as u8) << 3 | (reg as u8)
-            },
-            Instr::Jmp(op, dbit) =>
-                0b1011_0000 | (dbit as u8) << 3 | (op as u8),
-            Instr::Branch(op, dbit) =>
-                0b1011_0000 | (dbit as u8) << 3 | (op as u8),
+            }
+            Instr::Jmp(op, dbit) => 0b1011_0000 | (dbit as u8) << 3 | (op as u8),
+            Instr::Branch(op, dbit) => 0b1011_0000 | (dbit as u8) << 3 | (op as u8),
             Instr::Mem(op, dbit, reg) => {
                 let opcode = match op {
                     MemOp::Ld => 0b1100,
@@ -190,7 +209,7 @@ impl Instr {
                 };
 
                 (opcode as u8) << 4 | (dbit as u8) << 3 | (reg as u8)
-            },
+            }
             Instr::Imm(op, imm) => match op {
                 ImmOp::Imml => 0b1110_0000 | (imm & 0x0f),
                 ImmOp::Immh => 0b1111_0000 | ((imm & 0xf0) >> 4),

@@ -14,13 +14,13 @@ impl RamBlock {
     fn new(size: u16) -> Self {
         let mut data: Vec<u8> = Vec::new();
         data.resize(size as usize, 0);
-        return Self{data};
+        Self { data }
     }
 }
 
 impl emulator::MemBlock for RamBlock {
     fn load(&mut self, offset: u16) -> u8 {
-        return self.data[offset as usize];
+        self.data[offset as usize]
     }
     fn store(&mut self, offset: u16, value: u8) {
         self.data[offset as usize] = value;
@@ -28,16 +28,18 @@ impl emulator::MemBlock for RamBlock {
 }
 
 struct DisplayBlock {
-    rows: [[u8; 128/8]; 128],
+    rows: [[u8; 128 / 8]; 128],
 }
 
 impl DisplayBlock {
     fn new() -> Self {
-        return Self{rows: [[0 as u8; 128/8]; 128]};
+        Self {
+            rows: [[0 as u8; 128 / 8]; 128],
+        }
     }
 
     fn len(&self) -> usize {
-        return self.rows.len() * self.rows[0].len();
+        self.rows.len() * self.rows[0].len()
     }
 
     fn render(&self) {
@@ -54,7 +56,7 @@ impl DisplayBlock {
                         print!("█");
                     } else if abit && !bbit {
                         print!("▀");
-                    } else if !abit && bbit { 
+                    } else if !abit && bbit {
                         print!("▄");
                     } else {
                         print!(" ");
@@ -70,7 +72,7 @@ impl emulator::MemBlock for DisplayBlock {
     fn load(&mut self, offset: u16) -> u8 {
         let row = (offset as usize) % self.rows.len();
         let col = (offset as usize) / self.rows.len();
-        return self.rows[row][col];
+        self.rows[row][col]
     }
     fn store(&mut self, offset: u16, value: u8) {
         let row = (offset as usize) % self.rows.len();
@@ -81,11 +83,13 @@ impl emulator::MemBlock for DisplayBlock {
 }
 
 struct ControlBlock<'a> {
-    data: &'a RefCell<u8>
+    data: &'a RefCell<u8>,
 }
 
 impl emulator::MemBlock for ControlBlock<'_> {
-    fn load(&mut self, _offset: u16) -> u8 { 0 }
+    fn load(&mut self, _offset: u16) -> u8 {
+        0
+    }
     fn store(&mut self, _offset: u16, value: u8) {
         self.data.replace(value);
     }
@@ -107,7 +111,7 @@ fn main() -> Result<(), Box<io::Error>> {
     emu.map_memory(0x8000, display.len() as u16, &mut display);
 
     let ctrl_byte = RefCell::new(0 as u8);
-    let mut ctrl = ControlBlock{data: &ctrl_byte};
+    let mut ctrl = ControlBlock { data: &ctrl_byte };
     emu.map_memory(0xffff, 1, &mut ctrl);
 
     println!("{}", emu);
@@ -120,5 +124,5 @@ fn main() -> Result<(), Box<io::Error>> {
         println!("{}", emu);
     }
 
-    return Ok(());
+    Ok(())
 }

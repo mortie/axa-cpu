@@ -24,7 +24,7 @@ pub trait MemBlock {
 
 impl<'a> Emulator<'a> {
     pub fn new() -> Self {
-        return Self{
+        Self {
             regs: [0; 8],
             acc: 0,
             iptr: 0,
@@ -32,7 +32,7 @@ impl<'a> Emulator<'a> {
             cflag: false,
             oflag: false,
             mem: Vec::new(),
-        };
+        }
     }
 
     pub fn load(&mut self, addr: u16) -> u8 {
@@ -45,7 +45,7 @@ impl<'a> Emulator<'a> {
         }
 
         println!("Wild load: No block mapped to {}", addr);
-        return 0;
+        0
     }
 
     pub fn store(&mut self, addr: u16, value: u8) {
@@ -62,7 +62,7 @@ impl<'a> Emulator<'a> {
     }
 
     pub fn map_memory(&mut self, start: u16, length: u16, mem: &'a mut dyn MemBlock) {
-        self.mem.push(MemMapping{start, length, mem});
+        self.mem.push(MemMapping { start, length, mem });
     }
 
     pub fn exec(&mut self, instr: isa::Instr) {
@@ -85,48 +85,59 @@ impl<'a> Emulator<'a> {
                 match op {
                     isa::RegOp::Add => {
                         res = d + s;
-                        write = true; write_flags = true;
-                    },
+                        write = true;
+                        write_flags = true;
+                    }
                     isa::RegOp::Sub => {
                         res = d + (!s & 0xff) + 1;
-                        write = true; write_flags = true;
-                    },
+                        write = true;
+                        write_flags = true;
+                    }
                     isa::RegOp::Xor => {
                         res = d ^ s;
-                        write = true; write_flags = true;
-                    },
+                        write = true;
+                        write_flags = true;
+                    }
                     isa::RegOp::And => {
                         res = d & s;
-                        write = true; write_flags = true;
-                    },
+                        write = true;
+                        write_flags = true;
+                    }
                     isa::RegOp::Or => {
                         res = d | s;
-                        write = true; write_flags = true;
-                    },
+                        write = true;
+                        write_flags = true;
+                    }
                     isa::RegOp::Mov => {
                         res = s;
-                        write = true; write_flags = false;
-                    },
+                        write = true;
+                        write_flags = false;
+                    }
                     isa::RegOp::Shr => {
                         res = (d >> 1) | ((d & 1) << 8);
-                        write = true; write_flags = true;
-                    },
+                        write = true;
+                        write_flags = true;
+                    }
                     isa::RegOp::Cmp => {
                         res = d + (!s & 0xff) + 1;
-                        write = false; write_flags = true;
-                    },
+                        write = false;
+                        write_flags = true;
+                    }
                     isa::RegOp::Addc => {
                         res = d + s + self.cflag as u16;
-                        write = true; write_flags = true;
-                    },
+                        write = true;
+                        write_flags = true;
+                    }
                     isa::RegOp::Shrc => {
                         res = (d >> 1) | ((self.cflag as u16) << 7) | ((d & 1) << 8);
-                        write = true; write_flags = true;
-                    },
+                        write = true;
+                        write_flags = true;
+                    }
                     isa::RegOp::Cmpc => {
                         res = d + (!s & 0xff) + self.cflag as u16;
-                        write = false; write_flags = true;
-                    },
+                        write = false;
+                        write_flags = true;
+                    }
                 }
 
                 if write {
@@ -140,13 +151,12 @@ impl<'a> Emulator<'a> {
                 if write_flags {
                     self.zflag = (res & 0xff) == 0;
                     self.cflag = (res & 0x100) != 0;
-                    self.oflag =
-                        ((s & 0x40 & d & 0x40) != 0 && (res & 0x80) != 0) ||
-                        ((s & 0x80 & d & 0x80) != 0 && (res & 0x80) == 0);
+                    self.oflag = ((s & 0x40 & d & 0x40) != 0 && (res & 0x80) != 0)
+                        || ((s & 0x80 & d & 0x80) != 0 && (res & 0x80) == 0);
                 }
 
                 self.iptr += 1;
-            },
+            }
             isa::Instr::Jmp(op, sbit) => {
                 let acc = match sbit {
                     false => self.acc as u16,
@@ -157,12 +167,11 @@ impl<'a> Emulator<'a> {
                 let dest = cs << 8 | acc;
                 match op {
                     isa::JmpOp::Jmp => (),
-                    isa::JmpOp::Call =>
-                        self.regs[isa::Reg::RA as usize] = (self.iptr + 1) as u8,
+                    isa::JmpOp::Call => self.regs[isa::Reg::RA as usize] = (self.iptr + 1) as u8,
                 }
 
                 self.iptr = dest;
-            },
+            }
             isa::Instr::Branch(op, sbit) => {
                 let offset = match sbit {
                     false => self.acc as u16,
@@ -183,34 +192,32 @@ impl<'a> Emulator<'a> {
                 } else {
                     self.iptr += 1;
                 }
-            },
+            }
             isa::Instr::Mem(op, dbit, reg) => {
                 let addr = match dbit {
-                    true =>
-                        (self.regs[isa::Reg::DS as usize] as u16) << 8 |
-                        self.acc as u16,
+                    true => (self.regs[isa::Reg::DS as usize] as u16) << 8 | self.acc as u16,
                     false => self.acc as u16,
                 };
 
                 match op {
                     isa::MemOp::Ld => {
                         self.regs[reg as usize] = self.load(addr);
-                    },
+                    }
                     isa::MemOp::St => {
                         self.store(addr, self.regs[reg as usize]);
-                    },
+                    }
                 }
 
                 self.iptr += 1;
-            },
+            }
             isa::Instr::Imm(op, imm) => {
                 match op {
                     isa::ImmOp::Imml => {
                         self.acc = imm;
-                    },
+                    }
                     isa::ImmOp::Immh => {
                         self.acc |= imm << 4;
-                    },
+                    }
                 };
 
                 self.iptr += 1;
@@ -221,14 +228,23 @@ impl<'a> Emulator<'a> {
 
 impl fmt::Display for Emulator<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Flag: Z:{} C:{} O:{}",
-            self.zflag as u8, self.cflag as u8, self.oflag as u8)?;
+        writeln!(
+            f,
+            "Flag: Z:{} C:{} O:{}",
+            self.zflag as u8, self.cflag as u8, self.oflag as u8
+        )?;
         write!(f, "IPtr: 0x{:04x}", self.iptr)?;
         writeln!(f, ";  Accumulator: {}", self.acc)?;
-        writeln!(f, "Regs: CS:{: <3} DS:{: <3} SP:{: <3} RV:{: <3}",
-             self.regs[0], self.regs[1], self.regs[2], self.regs[3])?;
-        write!(f, "      A1:{: <3} A2:{: <3} A3:{: <3} RA:{: <3}",
-            self.regs[4], self.regs[5], self.regs[6], self.regs[7])?;
-        return Ok(());
+        writeln!(
+            f,
+            "Regs: CS:{: <3} DS:{: <3} SP:{: <3} RV:{: <3}",
+            self.regs[0], self.regs[1], self.regs[2], self.regs[3]
+        )?;
+        write!(
+            f,
+            "      A1:{: <3} A2:{: <3} A3:{: <3} RA:{: <3}",
+            self.regs[4], self.regs[5], self.regs[6], self.regs[7]
+        )?;
+        Ok(())
     }
 }
