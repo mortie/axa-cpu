@@ -134,7 +134,7 @@ def argcount(parts, n):
     if len(parts) - 1 != n:
         raise AsmError(
             "Operation " + parts[0] + " expected " +
-            n + " arguments, got " + len(parts) - 1)
+            str(n) + " arguments, got " + str(len(parts) - 1))
 
 def assemble_line(defines, parts):
     iname = parts[0]
