@@ -99,32 +99,6 @@ impl emulator::MemBlock for ControlBlock<'_> {
     }
 }
 
-fn _main() -> Result<(), Box<io::Error>> {
-    let mut emu = emulator::Emulator::new();
-
-    let mut ram = RamBlock::new(1024);
-    emu.map_memory(0, 1024, &mut ram);
-
-    let mut display = DisplayBlock::new();
-    emu.map_memory(0x8000, display.len() as u16, &mut display);
-
-    let ctrl_byte = RefCell::new(0 as u8);
-    let mut ctrl = ControlBlock { data: &ctrl_byte };
-    emu.map_memory(0xffff, 1, &mut ctrl);
-
-    println!("{}", emu);
-    while *ctrl_byte.borrow() == 0 {
-        let instr = Instr::parse(emu.load(emu.iptr));
-        println!("\n0x{:04x} {}", emu.iptr, instr);
-        io::stdin().read(&mut [0 as u8; 1])?;
-
-        emu.exec(instr);
-        println!("{}", emu);
-    }
-
-    Ok(())
-}
-
 fn usage(argv0: &str) {
     println!("Usage: {} emulate  [--step] <path>", argv0);
     println!("       {} assemble [in] [out]", argv0);
@@ -182,6 +156,10 @@ fn run_emulator(data: &Vec<u8>, opts: &EmuOpts) {
         if opts.step {
             println!("{}", emu);
         }
+    }
+
+    if !opts.step {
+        println!("{}", emu);
     }
 }
 

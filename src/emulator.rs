@@ -173,10 +173,14 @@ impl<'a> Emulator<'a> {
                 self.iptr = dest;
             }
             isa::Instr::Branch(op, sbit) => {
-                let offset = match sbit {
+                let mut offset = match sbit {
                     false => self.acc as u16,
-                    true => (self.acc as u16) | 0xff80,
+                    true => (self.acc as u16) | 0xf0,
                 };
+
+                if offset & 0x80 != 0 {
+                    offset |= 0xff00;
+                }
 
                 let branch = match op {
                     isa::BranchOp::B => true,
@@ -188,7 +192,7 @@ impl<'a> Emulator<'a> {
                 };
 
                 if branch {
-                    self.iptr += offset;
+                    self.iptr = self.iptr.wrapping_add(offset);
                 } else {
                     self.iptr += 1;
                 }

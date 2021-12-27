@@ -1,6 +1,6 @@
 use super::isa::*;
-use std::io::{BufRead, BufReader, Read, Write};
 use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read, Write};
 
 pub struct Context {
     defines: HashMap<String, u8>,
@@ -32,6 +32,13 @@ fn is_numeric(s: &str) -> bool {
 }
 
 fn parse_imm<'a>(s: &'a str, ctx: &Context) -> Result<u8, String> {
+    if s.starts_with("-") {
+        return match parse_imm(&s[1..], ctx) {
+            Ok(val) => Ok(((!val) as u16 + 1) as u8),
+            err => err,
+        };
+    }
+
     let res;
     if s.starts_with("0x") {
         res = u8::from_str_radix(&s[2..], 16);
@@ -43,6 +50,40 @@ fn parse_imm<'a>(s: &'a str, ctx: &Context) -> Result<u8, String> {
         res = u8::from_str_radix(&s, 10);
     } else if ctx.defines.contains_key(s) {
         res = Ok(ctx.defines[s]);
+    } else if s.starts_with('\'') {
+        let mut bytes = s.bytes();
+        bytes.next(); // quote
+        let mut ch = match bytes.next() {
+            Some(ch) => ch,
+            None => return Err("Invalid character literal".to_string()),
+        };
+
+        res = if ch == b'\\' {
+            ch = match bytes.next() {
+                Some(ch) => ch,
+                None => return Err("Invalid character literal".to_string()),
+            };
+
+            match ch {
+                b'n' => Ok(b'\n'),
+                b'r' => Ok(b'\r'),
+                b't' => Ok(b'\t'),
+                b's' => Ok(b' '),
+                b'0' => Ok(b'\0'),
+                ch => Ok(ch),
+            }
+        } else {
+            Ok(ch)
+        };
+
+        ch = match bytes.next() {
+            Some(ch) => ch,
+            None => return Err("Invalid character literal".to_string()),
+        };
+
+        if ch != b'\'' || bytes.next().is_some() {
+            return Err("Invalid character literal".to_string());
+        }
     } else {
         return Err("Invalid immediate".to_string());
     }
@@ -146,6 +187,10 @@ pub fn assemble_line(line: &str, w: &mut dyn Write, ctx: &mut Context) -> Result
         Some(op) => op,
         None => return Ok(()),
     };
+
+    if op.starts_with("#") {
+        return Ok(());
+    }
 
     if op == ".def" {
         let key = parts.next();
