@@ -1,5 +1,11 @@
 use super::isa::*;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::collections::HashMap;
+
+pub struct Context {
+    defines: HashMap<String, u8>,
+    iptr: u16,
+}
 
 fn parse_reg<'a>(s: &'a str) -> Option<Reg> {
     match s {
@@ -15,7 +21,17 @@ fn parse_reg<'a>(s: &'a str) -> Option<Reg> {
     }
 }
 
-fn parse_imm<'a>(s: &'a str) -> Result<u8, String> {
+fn is_numeric(s: &str) -> bool {
+    for ch in s.bytes() {
+        if !(ch >= b'0' && ch <= b'9') {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn parse_imm<'a>(s: &'a str, ctx: &Context) -> Result<u8, String> {
     let res;
     if s.starts_with("0x") {
         res = u8::from_str_radix(&s[2..], 16);
@@ -23,8 +39,12 @@ fn parse_imm<'a>(s: &'a str) -> Result<u8, String> {
         res = u8::from_str_radix(&s[2..], 8);
     } else if s.starts_with("0b") {
         res = u8::from_str_radix(&s[2..], 2);
-    } else {
+    } else if is_numeric(s) {
         res = u8::from_str_radix(&s, 10);
+    } else if ctx.defines.contains_key(s) {
+        res = Ok(ctx.defines[s]);
+    } else {
+        return Err("Invalid immediate".to_string());
     }
 
     match res {
@@ -103,7 +123,7 @@ where
     Ok(Instr::Mem(op, dbit, reg))
 }
 
-fn assemble_imm<'a, It>(op: ImmOp, mut parts: It) -> Result<Instr, String>
+fn assemble_imm<'a, It>(op: ImmOp, mut parts: It, ctx: &Context) -> Result<Instr, String>
 where
     It: Iterator<Item = &'a str>,
 {
@@ -112,7 +132,7 @@ where
         None => return Err("Expected 1 argument".to_string()),
     };
 
-    let imm = parse_imm(&imm)?;
+    let imm = parse_imm(&imm, ctx)?;
 
     match op {
         ImmOp::Imml => Ok(Instr::Imm(op, imm & 0x0f)),
@@ -120,12 +140,67 @@ where
     }
 }
 
-pub fn assemble_line(line: &str, w: &mut dyn Write) -> Result<(), String> {
+pub fn assemble_line(line: &str, w: &mut dyn Write, ctx: &mut Context) -> Result<(), String> {
     let mut parts = line.split_ascii_whitespace();
     let op = match parts.next() {
         Some(op) => op,
         None => return Ok(()),
     };
+
+    if op == ".def" {
+        let key = parts.next();
+        let val = parts.next();
+        if key.is_none() || val.is_none() || parts.next().is_some() {
+            return Err("Expected 2 arguments".to_string());
+        }
+
+        let val = parse_imm(val.unwrap(), ctx)?;
+        ctx.defines.insert(key.unwrap().to_string(), val);
+        return Ok(());
+    } else if op == ".zero" {
+        let count = parts.next();
+        if count.is_none() || parts.next().is_some() {
+            return Err("Expected 1 argument".to_string());
+        };
+
+        let count = parse_imm(count.unwrap(), ctx)?;
+        for _ in 0..count {
+            if let Err(err) = w.write(&[0 as u8]) {
+                return Err(err.to_string());
+            }
+            ctx.iptr += 1;
+        }
+
+        return Ok(());
+    } else if op == ".byte" {
+        let val = parts.next();
+        if val.is_none() || parts.next().is_some() {
+            return Err("Expected 1 argument".to_string());
+        };
+
+        let val = parse_imm(val.unwrap(), ctx);
+        if let Err(err) = w.write(&[val.unwrap()]) {
+            return Err(err.to_string());
+        }
+        ctx.iptr += 1;
+
+        return Ok(());
+    } else if op == ".align" {
+        let count = parts.next();
+        if count.is_none() || parts.next().is_some() {
+            return Err("Expected 1 argument".to_string());
+        };
+
+        let count = parse_imm(count.unwrap(), ctx)?;
+        while ctx.iptr % (count as u16) != 0 {
+            if let Err(err) = w.write(&[0 as u8]) {
+                return Err(err.to_string());
+            }
+            ctx.iptr += 1;
+        }
+
+        return Ok(());
+    }
 
     let instr = match op {
         "add" => assemble_reg(RegOp::Add, parts),
@@ -157,18 +232,25 @@ pub fn assemble_line(line: &str, w: &mut dyn Write) -> Result<(), String> {
         "sts" => assemble_mem(MemOp::St, false, parts),
         "ldd" => assemble_mem(MemOp::Ld, true, parts),
         "std" => assemble_mem(MemOp::St, true, parts),
-        "imml" => assemble_imm(ImmOp::Imml, parts),
-        "immh" => assemble_imm(ImmOp::Immh, parts),
+        "imml" => assemble_imm(ImmOp::Imml, parts, &ctx),
+        "immh" => assemble_imm(ImmOp::Immh, parts, &ctx),
         _ => return Err("Invalid instruction".to_string()),
     }?;
 
-    match w.write(&[instr.format()]) {
-        Ok(_) => Ok(()),
-        Err(err) => Err(err.to_string()),
+    if let Err(err) = w.write(&[instr.format()]) {
+        return Err(err.to_string());
     }
+
+    ctx.iptr += 1;
+    Ok(())
 }
 
 pub fn assemble(r: &mut dyn Read, w: &mut dyn Write) -> Result<(), String> {
+    let mut ctx = Context {
+        defines: HashMap::new(),
+        iptr: 0,
+    };
+
     let reader = BufReader::new(r);
     let mut linenum = 1;
     for line in reader.lines() {
@@ -177,7 +259,7 @@ pub fn assemble(r: &mut dyn Read, w: &mut dyn Write) -> Result<(), String> {
             Err(err) => return Err(err.to_string()),
         };
 
-        let res = assemble_line(&line, w);
+        let res = assemble_line(&line, w, &mut ctx);
         if let Err(err) = res {
             return Err(format!("Line {}: {}", linenum, err));
         }
