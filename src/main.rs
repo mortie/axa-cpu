@@ -5,6 +5,9 @@ use isa::*;
 use std::cell::RefCell;
 use std::io;
 use std::io::Read;
+use std::env;
+use std::process;
+use std::fs;
 
 struct RamBlock {
     data: Vec<u8>,
@@ -95,16 +98,10 @@ impl emulator::MemBlock for ControlBlock<'_> {
     }
 }
 
-fn main() -> Result<(), Box<io::Error>> {
+fn _main() -> Result<(), Box<io::Error>> {
     let mut emu = emulator::Emulator::new();
 
     let mut ram = RamBlock::new(1024);
-    ram.data[0] = Instr::Imm(ImmOp::Imml, 0x01).format();
-    ram.data[1] = Instr::Reg(RegOp::Mov, false, Reg::A1).format();
-    ram.data[2] = Instr::Imm(ImmOp::Imml, 0xff).format();
-    ram.data[3] = Instr::Imm(ImmOp::Immh, 0xff).format();
-    ram.data[4] = Instr::Reg(RegOp::Mov, false, Reg::DS).format();
-    ram.data[5] = Instr::Mem(MemOp::St, true, Reg::A1).format();
     emu.map_memory(0, 1024, &mut ram);
 
     let mut display = DisplayBlock::new();
@@ -125,4 +122,119 @@ fn main() -> Result<(), Box<io::Error>> {
     }
 
     Ok(())
+}
+
+fn usage(argv0: &str) {
+    println!("Usage: {} emulate [--step] <path>", argv0);
+}
+
+struct EmuOpts {
+    step: bool,
+}
+
+fn run_emulator(data: &Vec<u8>, opts: &EmuOpts) {
+    let ram_size = 1024;
+    if data.len() > ram_size {
+        println!("Program too long! Have {} bytes of RAM, program is {} bytes",
+                 ram_size, data.len());
+        return;
+    }
+
+    let mut emu = emulator::Emulator::new();
+
+    let mut ram = RamBlock::new(ram_size as u16);
+    for idx in 0..data.len() {
+        ram.data[idx] = data[idx];
+    }
+    emu.map_memory(0, ram_size as u16, &mut ram);
+
+    let mut display = DisplayBlock::new();
+    emu.map_memory(0x8000, display.len() as u16, &mut display);
+
+    let ctrl_byte = RefCell::new(0 as u8);
+    let mut ctrl = ControlBlock { data: &ctrl_byte };
+    emu.map_memory(0xffff, 1, &mut ctrl);
+
+    if opts.step {
+        println!("{}", emu);
+    }
+
+    while *ctrl_byte.borrow() == 0 {
+        let instr = Instr::parse(emu.load(emu.iptr));
+
+        if opts.step {
+            println!("\n0x{:04x} {}", emu.iptr, instr);
+            let maybe_err = io::stdin().read(&mut [0 as u8; 1]);
+            if maybe_err.is_err() {
+                println!("Failed to read stdin: {}", maybe_err.err().unwrap());
+                return;
+            }
+        }
+
+        emu.exec(instr);
+
+        if opts.step {
+            println!("{}", emu);
+        }
+    }
+}
+
+fn do_emulate(argv0: &str, args: &mut env::Args) -> i32 {
+    let mut opts = EmuOpts { step: false };
+    let mut path: Option<String> = None;
+
+    for arg in args {
+        if arg == "--step" {
+            opts.step = true
+        } else if path.is_none() {
+            path = Some(arg)
+        } else {
+            usage(argv0);
+            return 1;
+        }
+    }
+
+    if path.is_none() {
+        usage(argv0);
+        return 1;
+    }
+    let path = path.unwrap();
+
+    let data = fs::read(&path);
+    if data.is_err() {
+        println!("{}: {}", path, data.err().unwrap());
+        return 1;
+    }
+    let data = data.unwrap();
+
+    run_emulator(&data, &opts);
+    0
+}
+
+fn main() {
+    let mut args = env::args();
+    let argv0 = args.next().unwrap();
+
+    loop {
+        let arg = args.next();
+        if arg.is_none() {
+            break;
+        }
+        let arg = arg.unwrap();
+
+        if arg == "--help" || arg == "-h" {
+            usage(&argv0);
+            process::exit(0);
+        } else if arg.starts_with("-") {
+            usage(&argv0);
+            process::exit(1);
+        } else if arg == "emulate" {
+            process::exit(do_emulate(&argv0, &mut args));
+        } else {
+            usage(&argv0);
+            process::exit(1);
+        }
+    }
+
+    usage(&argv0);
 }
