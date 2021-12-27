@@ -3,11 +3,11 @@ mod isa;
 
 use isa::*;
 use std::cell::RefCell;
+use std::env;
+use std::fs;
 use std::io;
 use std::io::Read;
-use std::env;
 use std::process;
-use std::fs;
 
 struct RamBlock {
     data: Vec<u8>,
@@ -135,8 +135,11 @@ struct EmuOpts {
 fn run_emulator(data: &Vec<u8>, opts: &EmuOpts) {
     let ram_size = 1024;
     if data.len() > ram_size {
-        println!("Program too long! Have {} bytes of RAM, program is {} bytes",
-                 ram_size, data.len());
+        println!(
+            "Program too long! Have {} bytes of RAM, program is {} bytes",
+            ram_size,
+            data.len()
+        );
         return;
     }
 
