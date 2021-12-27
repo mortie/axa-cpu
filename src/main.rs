@@ -1,3 +1,4 @@
+mod assembler;
 mod emulator;
 mod isa;
 
@@ -6,7 +7,7 @@ use std::cell::RefCell;
 use std::env;
 use std::fs;
 use std::io;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process;
 
 struct RamBlock {
@@ -125,7 +126,9 @@ fn _main() -> Result<(), Box<io::Error>> {
 }
 
 fn usage(argv0: &str) {
-    println!("Usage: {} emulate [--step] <path>", argv0);
+    println!("Usage: {} emulate  [--step] <path>", argv0);
+    println!("       {} assemble [in] [out]", argv0);
+    println!("       {} run      [--step] <path>", argv0);
 }
 
 struct EmuOpts {
@@ -197,18 +200,107 @@ fn do_emulate(argv0: &str, args: &mut env::Args) -> i32 {
         }
     }
 
-    if path.is_none() {
-        usage(argv0);
-        return 1;
-    }
-    let path = path.unwrap();
+    let path = match path {
+        Some(path) => path,
+        None => {
+            usage(&argv0);
+            return 1;
+        }
+    };
 
-    let data = fs::read(&path);
-    if data.is_err() {
-        println!("{}: {}", path, data.err().unwrap());
+    let data = match fs::read(&path) {
+        Ok(data) => data,
+        Err(err) => {
+            println!("{}: {}", path, err);
+            return 1;
+        }
+    };
+
+    run_emulator(&data, &opts);
+    0
+}
+
+fn do_assemble(argv0: &str, args: &mut env::Args) -> i32 {
+    let mut inpath: Option<String> = None;
+    let mut outpath: Option<String> = None;
+
+    for arg in args {
+        if inpath.is_none() {
+            inpath = Some(arg);
+        } else if outpath.is_none() {
+            outpath = Some(arg);
+        } else {
+            usage(argv0);
+            return 1;
+        }
+    }
+
+    let mut instream: Box<dyn Read> = match inpath {
+        Some(path) => match fs::File::open(&path) {
+            Ok(f) => Box::new(f),
+            Err(err) => {
+                println!("{}: {}", path, err);
+                return 1;
+            }
+        },
+        None => Box::new(io::stdin()),
+    };
+
+    let mut outstream: Box<dyn Write> = match outpath {
+        Some(path) => match fs::File::create(&path) {
+            Ok(f) => Box::new(f),
+            Err(err) => {
+                println!("{}: {}", path, err);
+                return 1;
+            }
+        },
+        None => Box::new(io::stdout()),
+    };
+
+    if let Err(err) = assembler::assemble(&mut *instream, &mut *outstream) {
+        println!("{}", err);
         return 1;
     }
-    let data = data.unwrap();
+
+    0
+}
+
+fn do_run(argv0: &str, args: &mut env::Args) -> i32 {
+    let mut opts = EmuOpts { step: false };
+    let mut path: Option<String> = None;
+
+    for arg in args {
+        if arg == "--step" {
+            opts.step = true
+        } else if path.is_none() {
+            path = Some(arg)
+        } else {
+            usage(argv0);
+            return 1;
+        }
+    }
+
+    let path = match path {
+        Some(path) => path,
+        None => {
+            usage(&argv0);
+            return 1;
+        }
+    };
+
+    let mut infile = match fs::File::open(&path) {
+        Ok(f) => f,
+        Err(err) => {
+            println!("{}: {}", path, err);
+            return 1;
+        }
+    };
+
+    let mut data: Vec<u8> = Vec::new();
+    if let Err(err) = assembler::assemble(&mut infile, &mut data) {
+        println!("{}", err);
+        return 1;
+    }
 
     run_emulator(&data, &opts);
     0
@@ -233,6 +325,10 @@ fn main() {
             process::exit(1);
         } else if arg == "emulate" {
             process::exit(do_emulate(&argv0, &mut args));
+        } else if arg == "assemble" {
+            process::exit(do_assemble(&argv0, &mut args));
+        } else if arg == "run" {
+            process::exit(do_run(&argv0, &mut args));
         } else {
             usage(&argv0);
             process::exit(1);
