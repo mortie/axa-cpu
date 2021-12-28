@@ -210,7 +210,7 @@ pub fn assemble_line(line: &str, w: &mut dyn Write, ctx: &mut Context) -> Result
 
         let count = parse_imm(count.unwrap(), ctx)?;
         for _ in 0..count {
-            if let Err(err) = w.write(&[0 as u8]) {
+            if let Err(err) = w.write(&[0u8]) {
                 return Err(err.to_string());
             }
             ctx.iptr += 1;
@@ -238,7 +238,7 @@ pub fn assemble_line(line: &str, w: &mut dyn Write, ctx: &mut Context) -> Result
 
         let count = parse_imm(count.unwrap(), ctx)?;
         while ctx.iptr % (count as u16) != 0 {
-            if let Err(err) = w.write(&[0 as u8]) {
+            if let Err(err) = w.write(&[0u8]) {
                 return Err(err.to_string());
             }
             ctx.iptr += 1;

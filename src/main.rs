@@ -32,18 +32,18 @@ impl emulator::MemBlock for RamBlock {
 }
 
 struct DisplayBlock {
-    rows: [[u8; 128 / 8]; 128],
+    rows: [[u8; 32 / 8]; 32],
 }
 
 impl DisplayBlock {
     fn new() -> Self {
         Self {
-            rows: [[0 as u8; 128 / 8]; 128],
+            rows: [[0u8; 32 / 8]; 32],
         }
     }
 
     fn len(&self) -> usize {
-        self.rows.len() * self.rows[0].len()
+        self.rows.len() * self.rows[0].len() + 1
     }
 
     fn render(&self) {
@@ -73,12 +73,16 @@ impl DisplayBlock {
 }
 
 impl emulator::MemBlock for DisplayBlock {
-    fn load(&mut self, offset: u16) -> u8 {
-        let row = (offset as usize) % self.rows.len();
-        let col = (offset as usize) / self.rows.len();
-        self.rows[row][col]
-    }
+    fn load(&mut self, _offset: u16) -> u8 { 0 }
     fn store(&mut self, offset: u16, value: u8) {
+        if offset as usize > (self.rows.len() * self.rows[0].len()) {
+            for row in &mut self.rows {
+                for col in row {
+                    *col = 0u8;
+                }
+            }
+        }
+
         let row = (offset as usize) % self.rows.len();
         let col = (offset as usize) / self.rows.len();
         self.rows[row][col] = value;
@@ -131,7 +135,7 @@ fn run_emulator(data: &Vec<u8>, opts: &EmuOpts) {
     let mut display = DisplayBlock::new();
     emu.map_memory(0x8000, display.len() as u16, &mut display);
 
-    let ctrl_byte = RefCell::new(0 as u8);
+    let ctrl_byte = RefCell::new(0u8);
     let mut ctrl = ControlBlock { data: &ctrl_byte };
     emu.map_memory(0xffff, 1, &mut ctrl);
 
@@ -144,7 +148,7 @@ fn run_emulator(data: &Vec<u8>, opts: &EmuOpts) {
 
         if opts.step {
             println!("\n0x{:04x} {}", emu.iptr, instr);
-            let maybe_err = io::stdin().read(&mut [0 as u8; 1]);
+            let maybe_err = io::stdin().read(&mut [0u8; 1]);
             if maybe_err.is_err() {
                 println!("Failed to read stdin: {}", maybe_err.err().unwrap());
                 return;
