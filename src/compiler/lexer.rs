@@ -85,69 +85,41 @@ where
             None => return Ok(maketok(TokKind::Eof)),
         };
 
+        let simple = |this: &mut Self, kind: TokKind| {
+            this.consume_ch()?;
+            Ok(maketok(kind))
+        };
+
+        let complex = |this: &mut Self, block: fn(Option<u8>) -> TokKind| {
+            this.consume_ch()?;
+            let ch = this.peek_ch()?;
+            Ok(maketok(block(ch)))
+        };
+
         match ch {
-            b'(' => {
-                self.consume_ch()?;
-                Ok(maketok(TokKind::OpenParen))
-            }
-            b')' => {
-                self.consume_ch()?;
-                Ok(maketok(TokKind::CloseParen))
-            }
-            b';' => {
-                self.consume_ch()?;
-                Ok(maketok(TokKind::Semicolon))
-            }
-            b'=' => {
-                self.consume_ch()?;
-                match self.peek_ch()? {
-                    Some(b'=') => {
-                        self.consume_ch()?;
-                        Ok(maketok(TokKind::DblEquals))
-                    }
-                    _ => Ok(maketok(TokKind::Equals)),
-                }
-            }
-            b'+' => {
-                self.consume_ch()?;
-                match self.peek_ch()? {
-                    Some(b'=') => {
-                        self.consume_ch()?;
-                        Ok(maketok(TokKind::PlusEquals))
-                    }
-                    _ => Ok(maketok(TokKind::Plus)),
-                }
-            }
-            b'-' => {
-                self.consume_ch()?;
-                match self.peek_ch()? {
-                    Some(b'=') => {
-                        self.consume_ch()?;
-                        Ok(maketok(TokKind::MinusEquals))
-                    }
-                    _ => Ok(maketok(TokKind::Minus)),
-                }
-            }
-            b'*' => {
-                self.consume_ch()?;
-                match self.peek_ch()? {
-                    Some(b'=') => {
-                        self.consume_ch()?;
-                        Ok(maketok(TokKind::AsteriskEquals))
-                    }
-                    _ => Ok(maketok(TokKind::Asterisk)),
-                }
-            }
-            b'/' => {
-                self.consume_ch()?;
-                match self.peek_ch()? {
-                    Some(b'=') => {
-                        self.consume_ch()?;
-                        Ok(maketok(TokKind::SlashEquals))
-                    }
-                    _ => Ok(maketok(TokKind::Slash)),
-                }
-            }
+            b'(' => simple(self, TokKind::OpenParen),
+            b')' => simple(self, TokKind::CloseParen),
+            b';' => simple(self, TokKind::Semicolon),
+            b'=' => complex(self, |ch| match ch {
+                Some(b'=') => TokKind::DblEquals,
+                _ => TokKind::Equals,
+            }),
+            b'+' => complex(self, |ch| match ch {
+                Some(b'=') => TokKind::PlusEquals,
+                _ => TokKind::Plus,
+            }),
+            b'-' => complex(self, |ch| match ch {
+                Some(b'=') => TokKind::MinusEquals,
+                _ => TokKind::Minus,
+            }),
+            b'*' => complex(self, |ch| match ch {
+                Some(b'=') => TokKind::AsteriskEquals,
+                _ => TokKind::Asterisk,
+            }),
+            b'/' => complex(self, |ch| match ch {
+                Some(b'=') => TokKind::SlashEquals,
+                _ => TokKind::Slash,
+            }),
             ch => {
                 if ch.is_ascii_alphabetic() || ch == b'_' {
                     let ident = match self.read_ident()? {

@@ -2,9 +2,9 @@ use super::super::isa;
 use std::collections::HashMap;
 
 pub struct Program {
-    const_decls: HashMap<String, ConstExpr>,
-    data_decls: HashMap<String, DataDecl>,
-    func_decls: HashMap<String, FuncDecl>,
+    pub const_decls: HashMap<String, ConstExpr>,
+    pub data_decls: HashMap<String, DataDecl>,
+    pub func_decls: HashMap<String, FuncDecl>,
 }
 
 impl Program {
@@ -18,13 +18,13 @@ impl Program {
 }
 
 pub struct DataDecl {
-    val: ConstExpr,
-    addr: u32,
+    pub val: ConstExpr,
+    pub index: u32,
 }
 
 pub struct FuncDecl {
-    name: String,
-    statms: Block,
+    pub name: String,
+    pub statms: Block,
 }
 
 pub type Block = Vec<Statm>;
@@ -52,9 +52,8 @@ pub enum Acc {
 }
 
 pub enum Condition {
-    True(isa::Reg),
-    False(isa::Reg),
     Eq(isa::Reg, ConstExpr),
+    Neq(isa::Reg, ConstExpr),
     Gt(isa::Reg, ConstExpr),
     Ge(isa::Reg, ConstExpr),
     Lt(isa::Reg, ConstExpr),
@@ -77,14 +76,14 @@ pub enum ConstExpr {
 }
 
 impl ConstExpr {
-    fn eval(&self, prog: &Program) -> Result<i32, String> {
+    pub fn eval(&self, prog: &Program) -> Result<i32, String> {
         match self {
             ConstExpr::Literal(val) => Ok(*val),
             ConstExpr::Constant(name) => {
                 if let Some(decl) = prog.const_decls.get(name) {
                     decl.eval(prog)
                 } else if let Some(decl) = prog.data_decls.get(name) {
-                    Ok(decl.addr as i32)
+                    Ok((decl.index + 3) as i32)
                 } else {
                     Err(format!("Unknown variable: {}", name))
                 }
