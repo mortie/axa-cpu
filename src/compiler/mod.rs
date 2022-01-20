@@ -1,3 +1,4 @@
-mod ast;
-mod codegen;
-mod lexer;
+pub mod ast;
+pub mod codegen;
+pub mod lexer;
+pub mod parser;

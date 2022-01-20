@@ -1,6 +1,7 @@
 use super::super::isa;
 use std::collections::HashMap;
 
+#[derive(Debug)]
 pub struct Program {
     pub const_decls: HashMap<String, ConstExpr>,
     pub data_decls: HashMap<String, DataDecl>,
@@ -8,7 +9,7 @@ pub struct Program {
 }
 
 impl Program {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             const_decls: HashMap::new(),
             data_decls: HashMap::new(),
@@ -17,11 +18,13 @@ impl Program {
     }
 }
 
+#[derive(Debug)]
 pub struct DataDecl {
     pub val: ConstExpr,
     pub index: u32,
 }
 
+#[derive(Debug)]
 pub struct FuncDecl {
     pub name: String,
     pub statms: Block,
@@ -29,6 +32,7 @@ pub struct FuncDecl {
 
 pub type Block = Vec<Statm>;
 
+#[derive(Debug)]
 pub enum Statm {
     If(Condition, Block, Block),
     Loop(Block),
@@ -36,8 +40,11 @@ pub enum Statm {
     RegAssign(isa::Reg, AssignOp, Acc),
     Load(isa::Reg, Acc),
     Store(Acc, isa::Reg),
+    Call(String),
+    Return(Option<Acc>),
 }
 
+#[derive(Debug)]
 pub enum AssignOp {
     Mov,
     Add,
@@ -46,11 +53,13 @@ pub enum AssignOp {
     Or,
 }
 
+#[derive(Debug)]
 pub enum Acc {
     Reg(isa::Reg),
     Const(ConstExpr),
 }
 
+#[derive(Debug)]
 pub enum Condition {
     Eq(isa::Reg, ConstExpr),
     Neq(isa::Reg, ConstExpr),
@@ -60,6 +69,7 @@ pub enum Condition {
     Le(isa::Reg, ConstExpr),
 }
 
+#[derive(Debug)]
 pub enum BinOp {
     Add,
     Sub,
@@ -69,6 +79,7 @@ pub enum BinOp {
     RShift,
 }
 
+#[derive(Debug)]
 pub enum ConstExpr {
     Literal(i32),
     Constant(String),
