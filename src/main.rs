@@ -426,12 +426,41 @@ fn do_compile(argv0: &str, args: &mut env::Args) -> i32 {
         _ => (),
     }
 
+
     let mut addr = 0u16;
-    for instr in &gen.code {
-        if let Some(text) = gen.annotations.get(&addr) {
-            println!("{}:", text);
+    let mut annotation_idx = 0;
+    let mut annotation_depth = 0;
+    let print_space = |depth| {
+        for _ in 0..depth {
+            print!("    ");
         }
-        println!("    0x{:04x} {}", addr, isa::Instr::parse(*instr));
+    };
+
+    for instr in &gen.code {
+        loop {
+            if annotation_idx >= gen.annotations.len() {
+                break;
+            }
+
+            let (annotation_addr, annotation) = &gen.annotations[annotation_idx];
+            if *annotation_addr != addr {
+                break;
+            }
+
+            match annotation {
+                codegen::Annotation::Indent(text) => {
+                    print_space(annotation_depth);
+                    println!("; {}", text);
+                    annotation_depth += 1;
+                }
+                codegen::Annotation::Dedent => annotation_depth -= 1,
+            }
+
+            annotation_idx += 1;
+        }
+
+        print_space(annotation_depth);
+        println!("0x{:04x} {}", addr, isa::Instr::parse(*instr));
         addr += 1;
     }
 

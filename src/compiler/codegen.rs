@@ -4,11 +4,16 @@ use super::ast::*;
 use std::collections::HashMap;
 use std::io::Write;
 
+pub enum Annotation {
+    Indent(String),
+    Dedent,
+}
+
 pub struct Context<'a> {
     pub code: Vec<u8>,
     calls: Vec<(usize, String)>,
     program: &'a Program,
-    pub annotations: HashMap<u16, String>,
+    pub annotations: Vec<(u16, Annotation)>,
     optimize: bool,
 }
 
@@ -18,7 +23,7 @@ impl<'a> Context<'a> {
             code: Vec::new(),
             calls: Vec::new(),
             program,
-            annotations: HashMap::new(),
+            annotations: Vec::new(),
             optimize: true,
         }
     }
@@ -47,11 +52,15 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn annotate(&mut self, text: String) {
-        self.annotations.insert(self.code.len() as u16, text);
+    fn indent(&mut self, text: String) {
+        self.annotations.push((self.location() as u16, Annotation::Indent(text)));
+    }
+    fn dedent(&mut self) {
+        self.annotations.push((self.location() as u16, Annotation::Dedent));
     }
 
     fn gen_call(&mut self, target: String) {
+        self.indent(format!("Call {}", target));
         self.calls.push((self.location(), target));
         self.asm("mov acc cs");
         self.asm("mov rv acc");
@@ -61,26 +70,25 @@ impl<'a> Context<'a> {
         self.asm("imml 0");
         self.asm("immh 0");
         self.asm("call");
+        self.dedent();
     }
 
     pub fn generate(&mut self) -> Result<(), String> {
-        if !self.program.func_decls.contains_key("main") {
-            return Err("No main function".to_string());
-        }
-
         // Jump past data/stack
-        self.annotate("Start".to_string());
+        self.indent("Start".to_string());
         self.asm("imml 0x01");
         self.asm("mov cs acc");
         self.asm("imml 0");
         self.asm("jmp");
+        self.dedent();
 
         // Space for data
-        self.annotate("Data".to_string());
+        self.indent("Data".to_string());
         let data_base = self.code.len();
         for _ in 0..self.program.data_decls.len() {
             self.code.push(0);
         }
+        self.dedent();
 
         // Initialize data
         for (_, decl) in &self.program.data_decls {
@@ -89,27 +97,36 @@ impl<'a> Context<'a> {
         }
 
         // Zero out stack
-        self.annotate("Stack".to_string());
+        self.indent("Stack".to_string());
         let stack_base = self.code.len();
         while self.code.len() < 256 {
             self.code.push(0);
         }
+        self.dedent();
+
+        self.indent("Loader".to_string());
 
         // Set up stack
-        self.annotate("Initialize".to_string());
         self.asm(&format!("imml {}", stack_base));
         self.asm("mov sp acc");
 
         // Call main
         self.gen_call("main".to_string());
 
+        // Infinite loop after main terminates
+        self.asm("imml 0");
+        self.asm("b");
+
+        self.dedent();
+
         let mut funcs: HashMap<String, usize> = HashMap::new();
 
         // Functions
-        for (_, func) in &self.program.func_decls {
-            funcs.insert(func.name.clone(), self.location());
-            self.annotate(format!("Func {}", func.name));
-            gen_func_decl(func, self)?;
+        for decl in &self.program.func_decls {
+            funcs.insert(decl.name.clone(), self.location());
+            self.indent(format!("Func {}", decl.name));
+            gen_func_decl(decl, self)?;
+            self.dedent();
         }
 
         // Fix up function calls
@@ -138,8 +155,20 @@ impl<'a> Context<'a> {
     }
 }
 
-fn gen_func_decl(decl: &FuncDecl, ctx: &mut Context) -> Result<(), String> {
-    gen_block(&decl.statms, ctx)
+fn expr_is_zero_page(expr: &ConstExpr, prog: &Program) -> bool {
+    match expr {
+        ConstExpr::Literal(..) => false,
+        ConstExpr::Constant(name) => {
+            if prog.const_decls.contains_key(name) {
+                false
+            } else if prog.data_decls.contains_key(name) {
+                true
+            } else {
+                false
+            }
+        }
+        ConstExpr::BinExpr(a, .., b) => expr_is_zero_page(a, prog) || expr_is_zero_page(b, prog),
+    }
 }
 
 fn optimize(unoptimized: &[u8]) -> Vec<u8> {
@@ -188,6 +217,10 @@ fn optimize(unoptimized: &[u8]) -> Vec<u8> {
     optimized
 }
 
+fn gen_func_decl(decl: &FuncDecl, ctx: &mut Context) -> Result<(), String> {
+    gen_block(&decl.statms, ctx)
+}
+
 fn gen_block(block: &Block, ctx: &mut Context) -> Result<(), String> {
     if !ctx.optimize {
         for statm in block {
@@ -227,10 +260,13 @@ fn gen_block(block: &Block, ctx: &mut Context) -> Result<(), String> {
 fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
     match statm {
         Statm::If(cond, a, b) => {
+            ctx.indent("If Statm".to_string());
             let branch_target_loc = gen_branch_if_not_cond(cond, ctx)?;
 
             let a_start = ctx.location();
+            ctx.indent("If-block".to_string());
             gen_block(a, ctx)?;
+            ctx.dedent();
             let a_footer_start = ctx.location();
             let has_b = b.len() > 0;
             if has_b {
@@ -244,25 +280,36 @@ fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
 
             if has_b {
                 let b_start = ctx.location();
+                ctx.indent("Else-block".to_string());
                 gen_block(b, ctx)?;
+                ctx.dedent();
                 let b_len = ctx.location() - b_start;
                 ctx.patch(a_footer_start, b_len as u8);
             }
+
+            ctx.dedent();
         }
         Statm::Loop(block) => {
+            ctx.indent("Loop".to_string());
             let start = ctx.location();
+            ctx.indent("Loop-block".to_string());
             gen_block(block, ctx)?;
+            ctx.dedent();
             let branch_target_loc = ctx.location();
             ctx.asm("imml 0");
             ctx.asm("immh 0");
             let len = ctx.location() - start;
-            ctx.asm("bb");
+            ctx.asm("b");
             ctx.patch(branch_target_loc, (!(len as u8)).wrapping_add(1));
+            ctx.dedent();
         }
         Statm::While(cond, block) => {
+            ctx.indent("While".to_string());
             let start = ctx.location();
             let branch_target_loc = gen_branch_if_not_cond(cond, ctx)?;
+            ctx.indent("Loop-block".to_string());
             gen_block(block, ctx)?;
+            ctx.dedent();
             let branch_back_loc = ctx.location();
             ctx.asm("imml 0");
             ctx.asm("immh 0");
@@ -271,6 +318,7 @@ fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
             let len = start - ctx.location();
             ctx.patch(branch_target_loc, len as u8);
             ctx.patch(branch_back_loc, !(len as u8).wrapping_add(1));
+            ctx.dedent();
         }
         Statm::RegAssign(reg, op, acc) => {
             gen_acc(acc, ctx)?;
@@ -283,15 +331,23 @@ fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
             };
             ctx.instr(isa::Instr::Reg(regop, false, *reg));
         }
-
-        // TODO: These have to know whether relative or not
         Statm::Load(reg, acc) => {
             gen_acc(acc, ctx)?;
-            ctx.instr(isa::Instr::Mem(isa::MemOp::Ld, true, *reg));
+            match acc {
+                Acc::Const(expr) if expr_is_zero_page(expr, ctx.program) => {
+                    ctx.instr(isa::Instr::Mem(isa::MemOp::Ld, false, *reg))
+                }
+                _ => ctx.instr(isa::Instr::Mem(isa::MemOp::Ld, true, *reg)),
+            }
         }
         Statm::Store(acc, reg) => {
             gen_acc(acc, ctx)?;
-            ctx.instr(isa::Instr::Mem(isa::MemOp::St, true, *reg));
+            match acc {
+                Acc::Const(expr) if expr_is_zero_page(expr, ctx.program) => {
+                    ctx.instr(isa::Instr::Mem(isa::MemOp::St, false, *reg))
+                }
+                _ => ctx.instr(isa::Instr::Mem(isa::MemOp::St, true, *reg)),
+            }
         }
         Statm::Call(name) => {
             ctx.gen_call(name.clone());

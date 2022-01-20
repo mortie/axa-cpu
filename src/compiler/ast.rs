@@ -5,7 +5,7 @@ use std::collections::HashMap;
 pub struct Program {
     pub const_decls: HashMap<String, ConstExpr>,
     pub data_decls: HashMap<String, DataDecl>,
-    pub func_decls: HashMap<String, FuncDecl>,
+    pub func_decls: Vec<FuncDecl>,
 }
 
 impl Program {
@@ -13,7 +13,7 @@ impl Program {
         Self {
             const_decls: HashMap::new(),
             data_decls: HashMap::new(),
-            func_decls: HashMap::new(),
+            func_decls: Vec::new(),
         }
     }
 }
@@ -94,7 +94,7 @@ impl ConstExpr {
                 if let Some(decl) = prog.const_decls.get(name) {
                     decl.eval(prog)
                 } else if let Some(decl) = prog.data_decls.get(name) {
-                    Ok((decl.index + 3) as i32)
+                    Ok((decl.index + 4) as i32)
                 } else {
                     Err(format!("Unknown variable: {}", name))
                 }

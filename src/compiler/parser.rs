@@ -70,10 +70,9 @@ fn skip(lex: &mut Lexer, expected: TokKind) -> Result<(), Error> {
     }
 }
 
-fn decl_exists(program: &mut Program, name: &str) -> bool {
+fn decl_exists(program: &Program, name: &str) -> bool {
     program.const_decls.contains_key(name)
         || program.data_decls.contains_key(name)
-        || program.func_decls.contains_key(name)
 }
 
 pub fn parse_program(lex: &mut Lexer) -> Result<Program, Error> {
@@ -101,7 +100,7 @@ fn parse_top_level(lex: &mut Lexer, program: &mut Program) -> Result<(), Error> 
                 return Err(err(&tok, format!("Name '{}' already declared", decl.name)).into());
             }
 
-            program.func_decls.insert(decl.name.clone(), decl);
+            program.func_decls.push(decl);
             Ok(())
         }
         _ => Err(err_unexpected_token(&tok).into()),

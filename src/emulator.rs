@@ -220,7 +220,7 @@ impl<'a> Emulator<'a> {
                         self.acc = imm;
                     }
                     isa::ImmOp::Immh => {
-                        self.acc |= imm << 4;
+                        self.acc |= imm;
                     }
                 };
 
