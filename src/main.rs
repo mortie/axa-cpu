@@ -3,6 +3,9 @@ mod compiler;
 mod emulator;
 mod isa;
 
+use compiler::codegen;
+use compiler::lexer;
+use compiler::parser;
 use isa::*;
 use std::cell::RefCell;
 use std::env;
@@ -116,6 +119,8 @@ fn usage(argv0: &str) {
     println!("Usage: {} emulate  [--step] <path>", argv0);
     println!("       {} assemble [in] [out]", argv0);
     println!("       {} run      [--step] <path>", argv0);
+    println!("       {} parse    <path>", argv0);
+    println!("       {} compile  [in] [out]", argv0);
 }
 
 struct EmuOpts {
@@ -335,6 +340,112 @@ fn do_run(argv0: &str, args: &mut env::Args) -> i32 {
     0
 }
 
+fn do_parse(argv0: &str, args: &mut env::Args) -> i32 {
+    let path = args.next();
+    if path.is_none() || args.next().is_some() {
+        usage(argv0);
+        return 1;
+    }
+
+    let path = path.unwrap();
+
+    let infile = match fs::File::open(&path) {
+        Ok(f) => f,
+        Err(err) => {
+            println!("{}: {}", path, err);
+            return 1;
+        }
+    };
+
+    let mut lexer = lexer::Lexer::new(Box::new(infile));
+    let program = match parser::parse_program(&mut lexer) {
+        Ok(program) => program,
+        Err(err) => {
+            println!("{}: {}", path, err);
+            return 1;
+        }
+    };
+
+    println!("Made AST: {:#?}", program);
+
+    0
+}
+
+fn do_compile(argv0: &str, args: &mut env::Args) -> i32 {
+    let mut inpath: Option<String> = None;
+    let mut outpath: Option<String> = None;
+
+    for arg in args {
+        if inpath.is_none() {
+            inpath = Some(arg);
+        } else if outpath.is_none() {
+            outpath = Some(arg);
+        } else {
+            usage(argv0);
+            return 1;
+        }
+    }
+
+    let instream: Box<dyn Read> = match inpath {
+        Some(path) => match fs::File::open(&path) {
+            Ok(f) => Box::new(f),
+            Err(err) => {
+                println!("{}: {}", path, err);
+                return 1;
+            }
+        },
+        None => Box::new(io::stdin()),
+    };
+
+    let mut outstream: Box<dyn Write> = match outpath {
+        Some(path) => match fs::File::create(&path) {
+            Ok(f) => Box::new(f),
+            Err(err) => {
+                println!("{}: {}", path, err);
+                return 1;
+            }
+        },
+        None => Box::new(io::stdout()),
+    };
+
+    let mut lexer = lexer::Lexer::new(instream);
+    let program = match parser::parse_program(&mut lexer) {
+        Ok(program) => program,
+        Err(err) => {
+            println!("{}", err);
+            return 1;
+        }
+    };
+
+    let mut gen = codegen::Context::new(&program);
+    match gen.generate() {
+        Err(err) => {
+            println!("{}", err);
+            return 1;
+        }
+        _ => (),
+    }
+
+    let mut addr = 0u16;
+    for instr in &gen.code {
+        if let Some(text) = gen.annotations.get(&addr) {
+            println!("{}:", text);
+        }
+        println!("    0x{:04x} {}", addr, isa::Instr::parse(*instr));
+        addr += 1;
+    }
+
+    match outstream.write_all(&gen.code) {
+        Err(err) => {
+            println!("{}", err);
+            return 1;
+        }
+        _ => (),
+    }
+
+    0
+}
+
 fn main() {
     let mut args = env::args();
     let argv0 = args.next().unwrap();
@@ -358,6 +469,10 @@ fn main() {
             process::exit(do_assemble(&argv0, &mut args));
         } else if arg == "run" {
             process::exit(do_run(&argv0, &mut args));
+        } else if arg == "parse" {
+            process::exit(do_parse(&argv0, &mut args));
+        } else if arg == "compile" {
+            process::exit(do_compile(&argv0, &mut args));
         } else {
             usage(&argv0);
             process::exit(1);
