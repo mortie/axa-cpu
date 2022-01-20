@@ -260,7 +260,7 @@ fn gen_block(block: &Block, ctx: &mut Context) -> Result<(), String> {
 fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
     match statm {
         Statm::If(cond, a, b) => {
-            ctx.indent("If Statm".to_string());
+            ctx.indent("If".to_string());
             let branch_target_loc = gen_branch_if_not_cond(cond, ctx)?;
 
             let a_start = ctx.location();
