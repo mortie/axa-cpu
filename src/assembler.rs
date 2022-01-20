@@ -7,6 +7,15 @@ pub struct Context {
     iptr: u16,
 }
 
+impl Context {
+    pub fn new() -> Self {
+        Self {
+            defines: HashMap::new(),
+            iptr: 0,
+        }
+    }
+}
+
 fn parse_reg<'a>(s: &'a str) -> Option<Reg> {
     match s {
         "cs" => Some(Reg::CS),
@@ -291,11 +300,7 @@ pub fn assemble_line(line: &str, w: &mut dyn Write, ctx: &mut Context) -> Result
 }
 
 pub fn assemble(r: &mut dyn Read, w: &mut dyn Write) -> Result<(), String> {
-    let mut ctx = Context {
-        defines: HashMap::new(),
-        iptr: 0,
-    };
-
+    let mut ctx = Context::new();
     let reader = BufReader::new(r);
     let mut linenum = 1;
     for line in reader.lines() {

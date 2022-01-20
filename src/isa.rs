@@ -1,6 +1,6 @@
 use std::fmt;
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Reg {
     CS = 0,
     DS = 1,
@@ -27,6 +27,7 @@ impl fmt::Display for Reg {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum RegOp {
     Add,
     Sub,
@@ -59,6 +60,7 @@ impl fmt::Display for RegOp {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum JmpOp {
     Jmp = 0b000,
     Call = 0b001,
@@ -73,6 +75,7 @@ impl fmt::Display for JmpOp {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum BranchOp {
     B = 0b010,
     Beq = 0b011,
@@ -95,6 +98,7 @@ impl fmt::Display for BranchOp {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum MemOp {
     Ld,
     St,
@@ -109,6 +113,7 @@ impl fmt::Display for MemOp {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum ImmOp {
     Imml,
     Immh,
@@ -123,6 +128,7 @@ impl fmt::Display for ImmOp {
     }
 }
 
+#[derive(Debug, Clone)]
 pub enum Instr {
     Reg(RegOp, bool, Reg),
     Jmp(JmpOp, bool),
@@ -176,7 +182,7 @@ impl Instr {
             0b1100 => Instr::Mem(MemOp::Ld, dbit, reg),
             0b1101 => Instr::Mem(MemOp::St, dbit, reg),
             0b1110 => Instr::Imm(ImmOp::Imml, imm),
-            0b1111 => Instr::Imm(ImmOp::Immh, imm),
+            0b1111 => Instr::Imm(ImmOp::Immh, imm << 4),
             _ => panic!("Illegal op"),
         }
     }
@@ -195,7 +201,7 @@ impl Instr {
                     RegOp::Cmp => 0b0111,
                     RegOp::Addc => 0b1000,
                     RegOp::Shrc => 0b1001,
-                    RegOp::Cmpc => 0b1011,
+                    RegOp::Cmpc => 0b1010,
                 };
 
                 (opcode as u8) << 4 | (dbit as u8) << 3 | (reg as u8)
@@ -236,8 +242,20 @@ impl fmt::Display for Instr {
             },
             Instr::Imm(op, imm) => match op {
                 ImmOp::Imml => write!(f, "imml 0x{:02x}", imm),
-                ImmOp::Immh => write!(f, "immh 0x{:02x}", imm << 4),
+                ImmOp::Immh => write!(f, "immh 0x{:02x}", imm),
             },
+        }
+    }
+}
+
+#[test]
+fn test_instr_roundtrip() {
+    for ibyte in 0u8..255u8 {
+        let instr = Instr::parse(ibyte);
+        if ibyte != instr.clone().format() {
+            println!("Incorrect: {:08b} -> {:08b}", ibyte, instr.clone().format());
+            println!(" Assembly: {}", instr);
+            assert_eq!(ibyte, instr.format());
         }
     }
 }
