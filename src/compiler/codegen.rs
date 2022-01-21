@@ -276,7 +276,7 @@ fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
             }
             let a_len = ctx.location() - a_start;
 
-            ctx.patch(branch_target_loc, a_len as u8);
+            ctx.patch(branch_target_loc, (a_len + 1) as u8);
 
             if has_b {
                 let b_start = ctx.location();
@@ -284,7 +284,7 @@ fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
                 gen_block(b, ctx)?;
                 ctx.dedent();
                 let b_len = ctx.location() - b_start;
-                ctx.patch(a_footer_start, b_len as u8);
+                ctx.patch(a_footer_start, (b_len + 1) as u8);
             }
 
             ctx.dedent();
@@ -300,14 +300,15 @@ fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
             ctx.asm("immh 0");
             let len = ctx.location() - start;
             ctx.asm("b");
-            ctx.patch(branch_target_loc, (!(len as u8)).wrapping_add(1));
+            ctx.patch(branch_target_loc, (!(len as u8)).wrapping_sub(2));
             ctx.dedent();
         }
         Statm::While(cond, block) => {
             ctx.indent("While".to_string());
             let start = ctx.location();
             let branch_target_loc = gen_branch_if_not_cond(cond, ctx)?;
-            ctx.indent("Loop-block".to_string());
+            let block_start = ctx.location();
+            ctx.indent("While-block".to_string());
             gen_block(block, ctx)?;
             ctx.dedent();
             let branch_back_loc = ctx.location();
@@ -315,9 +316,10 @@ fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
             ctx.asm("immh 0");
             ctx.asm("b");
 
-            let len = start - ctx.location();
-            ctx.patch(branch_target_loc, len as u8);
-            ctx.patch(branch_back_loc, !(len as u8).wrapping_add(1));
+            let len_from_block = ctx.location() - block_start;
+            let len = ctx.location() - start;
+            ctx.patch(branch_target_loc, (len_from_block + 1) as u8);
+            ctx.patch(branch_back_loc, !(len as u8).wrapping_sub(2));
             ctx.dedent();
         }
         Statm::RegAssign(reg, op, acc) => {
@@ -328,6 +330,7 @@ fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
                 AssignOp::Sub => isa::RegOp::Sub,
                 AssignOp::And => isa::RegOp::And,
                 AssignOp::Or => isa::RegOp::Or,
+                AssignOp::Shr => isa::RegOp::Shr,
             };
             ctx.instr(isa::Instr::Reg(regop, false, *reg));
         }
@@ -372,24 +375,22 @@ fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
 }
 
 fn gen_branch_if_not_cond(cond: &Condition, ctx: &mut Context) -> Result<usize, String> {
-    let val = match cond {
-        Condition::Eq(_, expr) => expr,
-        Condition::Neq(_, expr) => expr,
-        Condition::Gt(_, expr) => expr,
-        Condition::Ge(_, expr) => expr,
-        Condition::Lt(_, expr) => expr,
-        Condition::Le(_, expr) => expr,
-    }
-    .eval(ctx.program)?;
+    let acc = match cond {
+        Condition::Eq(_, acc) => acc,
+        Condition::Neq(_, acc) => acc,
+        Condition::Gt(_, acc) => acc,
+        Condition::Ge(_, acc) => acc,
+        Condition::Lt(_, acc) => acc,
+        Condition::Le(_, acc) => acc,
+    };
 
-    ctx.asm(&format!("imml {}", val));
-    ctx.asm(&format!("immh {}", val));
+    gen_acc(acc, ctx)?;
 
     let target_loc;
     match cond {
         Condition::Eq(reg, _) => {
             ctx.instr(isa::Instr::Reg(isa::RegOp::Cmp, false, *reg));
-            ctx.asm("imml 3");
+            ctx.asm("imml 4");
             ctx.asm("beq");
             target_loc = ctx.location();
             ctx.asm("imml 0");

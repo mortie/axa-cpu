@@ -1,10 +1,9 @@
 use super::isa;
 use std::fmt;
 
-struct MemMapping<'a> {
-    start: u16,
-    length: u16,
-    mem: &'a mut dyn MemBlock,
+pub trait Memory {
+    fn load(&self, addr: u16) -> u8;
+    fn store(&self, addr: u16, value: u8);
 }
 
 pub struct Emulator<'a> {
@@ -14,16 +13,11 @@ pub struct Emulator<'a> {
     pub zflag: bool,
     pub cflag: bool,
     pub oflag: bool,
-    mem: Vec<MemMapping<'a>>,
-}
-
-pub trait MemBlock {
-    fn load(&mut self, offset: u16) -> u8;
-    fn store(&mut self, offset: u16, value: u8);
+    pub memory: &'a dyn Memory,
 }
 
 impl<'a> Emulator<'a> {
-    pub fn new() -> Self {
+    pub fn new(memory: &'a dyn Memory) -> Self {
         Self {
             regs: [0; 8],
             acc: 0,
@@ -31,38 +25,8 @@ impl<'a> Emulator<'a> {
             zflag: false,
             cflag: false,
             oflag: false,
-            mem: Vec::new(),
+            memory,
         }
-    }
-
-    pub fn load(&mut self, addr: u16) -> u8 {
-        for mapping in &mut self.mem {
-            let start = mapping.start;
-            let end = start + (mapping.length - 1);
-            if addr >= start && addr <= end {
-                return mapping.mem.load(addr - start);
-            }
-        }
-
-        println!("Wild load: No block mapped to {}", addr);
-        0
-    }
-
-    pub fn store(&mut self, addr: u16, value: u8) {
-        for mapping in &mut self.mem {
-            let start = mapping.start;
-            let end = start + (mapping.length - 1);
-            if addr >= start && addr <= end {
-                mapping.mem.store(addr - start, value);
-                return;
-            }
-        }
-
-        println!("Wild store: No block mapped to {}", addr);
-    }
-
-    pub fn map_memory(&mut self, start: u16, length: u16, mem: &'a mut dyn MemBlock) {
-        self.mem.push(MemMapping { start, length, mem });
     }
 
     pub fn exec(&mut self, instr: isa::Instr) {
@@ -205,10 +169,10 @@ impl<'a> Emulator<'a> {
 
                 match op {
                     isa::MemOp::Ld => {
-                        self.regs[reg as usize] = self.load(addr);
+                        self.regs[reg as usize] = self.memory.load(addr);
                     }
                     isa::MemOp::St => {
-                        self.store(addr, self.regs[reg as usize]);
+                        self.memory.store(addr, self.regs[reg as usize]);
                     }
                 }
 

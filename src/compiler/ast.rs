@@ -44,13 +44,14 @@ pub enum Statm {
     Return(Option<Acc>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum AssignOp {
     Mov,
     Add,
     Sub,
     And,
     Or,
+    Shr,
 }
 
 #[derive(Debug)]
@@ -61,12 +62,12 @@ pub enum Acc {
 
 #[derive(Debug)]
 pub enum Condition {
-    Eq(isa::Reg, ConstExpr),
-    Neq(isa::Reg, ConstExpr),
-    Gt(isa::Reg, ConstExpr),
-    Ge(isa::Reg, ConstExpr),
-    Lt(isa::Reg, ConstExpr),
-    Le(isa::Reg, ConstExpr),
+    Eq(isa::Reg, Acc),
+    Neq(isa::Reg, Acc),
+    Gt(isa::Reg, Acc),
+    Ge(isa::Reg, Acc),
+    Lt(isa::Reg, Acc),
+    Le(isa::Reg, Acc),
 }
 
 #[derive(Debug)]

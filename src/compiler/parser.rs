@@ -276,15 +276,21 @@ fn parse_reg_assign_statm(lex: &mut Lexer) -> Result<ast::Statm, Error> {
         _ => return Err(err_unexpected_token(&reg_tok).into()),
     };
 
-    let op = parse_assign_op(lex)?;
+    let mut op = parse_assign_op(lex)?;
 
     // If there's an equals followed by asterisk, this is a load statement,
     // not actually an assign statement
-    if lex.peek(0)?.kind == TokKind::Asterisk {
+    if op == ast::AssignOp::Mov && lex.peek(0)?.kind == TokKind::Asterisk {
         lex.consume()?;
         let acc = parse_accumulator_value(lex)?;
         skip(lex, TokKind::Semicolon)?;
         return Ok(ast::Statm::Load(reg, acc));
+    }
+
+    // If there's an equals followed by >>, this is a shift right statement
+    if op == ast::AssignOp::Mov && lex.peek(0)?.kind == TokKind::GtGt {
+        lex.consume()?;
+        op = ast::AssignOp::Shr;
     }
 
     let acc = parse_accumulator_value(lex)?;
@@ -373,29 +379,29 @@ fn parse_cond(lex: &mut Lexer) -> Result<ast::Condition, Error> {
     match next_tok.kind {
         TokKind::EqEq => {
             lex.consume()?;
-            Ok(ast::Condition::Eq(reg, parse_const_expr(lex)?))
+            Ok(ast::Condition::Eq(reg, parse_accumulator_value(lex)?))
         }
         TokKind::NotEq => {
             lex.consume()?;
-            Ok(ast::Condition::Neq(reg, parse_const_expr(lex)?))
+            Ok(ast::Condition::Neq(reg, parse_accumulator_value(lex)?))
         }
         TokKind::Lt => {
             lex.consume()?;
-            Ok(ast::Condition::Lt(reg, parse_const_expr(lex)?))
+            Ok(ast::Condition::Lt(reg, parse_accumulator_value(lex)?))
         }
         TokKind::Gt => {
             lex.consume()?;
-            Ok(ast::Condition::Gt(reg, parse_const_expr(lex)?))
+            Ok(ast::Condition::Gt(reg, parse_accumulator_value(lex)?))
         }
         TokKind::LtEq => {
             lex.consume()?;
-            Ok(ast::Condition::Le(reg, parse_const_expr(lex)?))
+            Ok(ast::Condition::Le(reg, parse_accumulator_value(lex)?))
         }
         TokKind::GtEq => {
             lex.consume()?;
-            Ok(ast::Condition::Ge(reg, parse_const_expr(lex)?))
+            Ok(ast::Condition::Ge(reg, parse_accumulator_value(lex)?))
         }
-        _ => Ok(ast::Condition::Neq(reg, ast::ConstExpr::Literal(0))),
+        _ => Ok(ast::Condition::Neq(reg, ast::Acc::Const(ast::ConstExpr::Literal(0)))),
     }
 }
 
