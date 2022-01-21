@@ -37,7 +37,7 @@ impl DisplayDevice {
     fn get_pixel(&self, x: usize, y: usize) -> bool {
         let xbyte = x / 8;
         let xbit = x % 8;
-        let cell = &self.data[y * DISPLAY_WIDTH + xbyte];
+        let cell = &self.data[y * (DISPLAY_WIDTH / 8) + xbyte];
         let byte = cell.get();
         match byte & (1 << xbit) {
             0 => false,
@@ -48,7 +48,7 @@ impl DisplayDevice {
     fn set_pixel(&self, x: usize, y: usize) {
         let xbyte = x / 8;
         let xbit = x % 8;
-        let cell = &self.data[y * DISPLAY_WIDTH + xbyte];
+        let cell = &self.data[y * (DISPLAY_WIDTH / 8) + xbyte];
         let mut byte = cell.get();
         byte |= 1 << xbit;
         cell.set(byte);
@@ -60,7 +60,14 @@ impl DisplayDevice {
 
     fn render(&self) {
         print!("\x1bc");
+        print!("╔");
+        for _ in 0..DISPLAY_WIDTH {
+            print!("═");
+        }
+        println!("╗");
+
         for y in 0..(DISPLAY_HEIGHT / 2) {
+            print!("║");
             let y = y * 2;
             for x in 0..DISPLAY_WIDTH {
                 let a = self.get_pixel(x, y);
@@ -76,8 +83,14 @@ impl DisplayDevice {
                     print!(" ");
                 }
             }
-            print!("\n");
+            print!("║\n");
         }
+
+        print!("╚");
+        for _ in 0..DISPLAY_WIDTH {
+            print!("═");
+        }
+        println!("╝");
     }
 
     fn store(&self, _offset: u16, value: u8) {
@@ -89,6 +102,7 @@ impl DisplayDevice {
             self.x.set(None);
         } else if let Some(x) = self.x.get() {
             self.set_pixel(x as usize, value as usize);
+            self.x.set(None);
         } else {
             self.x.set(Some(value));
         }
@@ -115,8 +129,6 @@ impl Memory {
 
 impl emulator::Memory for Memory {
     fn load(&self, addr: u16) -> u8 {
-        println!("Load from address {}", addr);
-
         if (addr as usize) < self.data.len() {
             return self.data[addr as usize].get();
         }
@@ -156,8 +168,6 @@ impl emulator::Memory for Memory {
             self.halt.set(true);
             return;
         }
-
-        println!("Store of {} to wild address {}!", value, addr);
     }
 }
 
