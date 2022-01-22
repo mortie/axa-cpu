@@ -39,10 +39,6 @@ impl DisplayDevice {
         cell.set(byte);
     }
 
-    fn len(&self) -> usize {
-        self.data.len()
-    }
-
     fn render(&self) {
         print!("\x1bc");
         print!("╔");
@@ -118,7 +114,7 @@ impl emulator::Memory for Memory {
             return self.data[addr as usize].get();
         }
 
-        if addr >= 0x8000 && (addr as usize) < 0x8000 + self.display.len() {
+        if addr == 0x8000 {
             return 0;
         }
 
@@ -140,8 +136,8 @@ impl emulator::Memory for Memory {
             return;
         }
 
-        if addr >= 0x8000 && (addr as usize) < 0x8000 + self.display.len() {
-            return self.display.store(addr - 0x8000, value);
+        if addr == 0x8000 {
+            return self.display.store(0, value);
         }
 
         if addr == 0xff00 {
