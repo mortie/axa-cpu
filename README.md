@@ -186,7 +186,7 @@ The immediate instructions are:
 | OpCode | Mnemonic | Expression                      |
 |--------|----------|---------------------------------|
 | 1110   | IMML     | Accumulator = Immediate         |
-| 1111   | IMMH     | Accumulator |= (Immediate << 4) |
+| 1111   | IMMH     | Accumulator \|= (Immediate << 4) |
 
 The `IMML` instruction clears the entire accumulator and then sets the low 4 bits
 to the `Immediate` value from the instruction.
