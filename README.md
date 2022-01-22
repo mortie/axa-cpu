@@ -114,7 +114,7 @@ Format J:
 | 1011     | SBit  | JumpOp   |
 
 The `JmpOp` is a 3-bit code which describes what kind of jump it is.
-There are two kinds of jumps: absolute and relative.
+There are two sorts of jumps: absolute and relative.
 
 The absolute jumps will jump to a 16-bit address, taking their low 8 bits from
 the accumulator and their high 8 bits from the Code Segment (CS) register.
