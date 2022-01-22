@@ -2,181 +2,105 @@ mod assembler;
 mod compiler;
 mod emulator;
 mod isa;
+mod devices;
 
-use compiler::codegen;
-use compiler::lexer;
-use compiler::parser;
-use isa::*;
+use std::thread;
 use std::env;
-use std::fs;
+use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
-use std::process;
-use std::thread;
+use std::path::Path;
 use std::time::Duration;
-use std::cell::Cell;
+use std::process;
 
-const DISPLAY_WIDTH: usize = 32;
-const DISPLAY_HEIGHT: usize = 32;
-
-struct DisplayDevice {
-    data: Vec<Cell<u8>>,
-    x: Cell<Option<u8>>,
+#[derive(Debug, Clone, Copy)]
+enum FileType {
+    Ax,
+    Asm,
+    MachineCode,
 }
 
-impl DisplayDevice {
-    fn new() -> Self {
-        let mut data: Vec<Cell<u8>> = Vec::new();
-        data.resize((DISPLAY_WIDTH / 8) * DISPLAY_HEIGHT, Cell::new(0));
-        Self {
-            data,
-            x: Cell::new(None),
-        }
-    }
+type Input = (Box<dyn Read>, FileType);
+type Output = (Box<dyn Write>, FileType);
 
-    fn get_pixel(&self, x: usize, y: usize) -> bool {
-        let xbyte = x / 8;
-        let xbit = x % 8;
-        let cell = &self.data[y * (DISPLAY_WIDTH / 8) + xbyte];
-        let byte = cell.get();
-        match byte & (1 << xbit) {
-            0 => false,
-            _ => true,
-        }
-    }
-
-    fn set_pixel(&self, x: usize, y: usize) {
-        let xbyte = x / 8;
-        let xbit = x % 8;
-        let cell = &self.data[y * (DISPLAY_WIDTH / 8) + xbyte];
-        let mut byte = cell.get();
-        byte |= 1 << xbit;
-        cell.set(byte);
-    }
-
-    fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    fn render(&self) {
-        print!("\x1bc");
-        print!("╔");
-        for _ in 0..DISPLAY_WIDTH {
-            print!("═");
-        }
-        println!("╗");
-
-        for y in 0..(DISPLAY_HEIGHT / 2) {
-            print!("║");
-            let y = y * 2;
-            for x in 0..DISPLAY_WIDTH {
-                let a = self.get_pixel(x, y);
-                let b = self.get_pixel(x, y + 1);
-
-                if a && b {
-                    print!("█");
-                } else if a && !b {
-                    print!("▀");
-                } else if !a && b {
-                    print!("▄");
-                } else {
-                    print!(" ");
-                }
-            }
-            print!("║\n");
-        }
-
-        print!("╚");
-        for _ in 0..DISPLAY_WIDTH {
-            print!("═");
-        }
-        println!("╝");
-    }
-
-    fn store(&self, _offset: u16, value: u8) {
-        if value == 0xffu8 {
-            self.render();
-            for cell in &self.data {
-                cell.set(0);
-            }
-            self.x.set(None);
-        } else if let Some(x) = self.x.get() {
-            self.set_pixel(x as usize, value as usize);
-            self.x.set(None);
-        } else {
-            self.x.set(Some(value));
-        }
+fn get_file_type(path: &Path) -> Result<FileType, String> {
+    match path.extension().and_then(|x| x.to_str()) {
+        Some("ax") => Ok(FileType::Ax),
+        Some("s") => Ok(FileType::Asm),
+        Some("o") | None => Ok(FileType::MachineCode),
+        Some(ext) => Err(format!("Unknown file extension: {}", ext)),
     }
 }
 
-struct Memory {
-    data: Vec<Cell<u8>>,
-    halt: Cell<bool>,
-    display: DisplayDevice,
+fn open_file(path: &Path) -> Result<Input, String> {
+    let t = get_file_type(path)?;
+    let f = match File::open(path) {
+        Ok(f) => f,
+        Err(err) => return Err(format!("{}: {}", path.to_string_lossy(), err)),
+    };
+    let r: Box<dyn Read> = Box::new(f);
+    Ok((r, t))
 }
 
-impl Memory {
-    fn new() -> Self {
-        let mut data: Vec<Cell<u8>> = Vec::new();
-        data.resize(1024, Cell::new(0));
-        Self {
-            data,
-            halt: Cell::new(false),
-            display: DisplayDevice::new(),
-        }
-    }
+fn create_file(path: &Path) -> Result<Output, String> {
+    let t = get_file_type(path)?;
+    let f = match File::create(path) {
+        Ok(f) => f,
+        Err(err) => return Err(err.to_string()),
+    };
+    let w: Box<dyn Write> = Box::new(f);
+    Ok((w, t))
 }
 
-impl emulator::Memory for Memory {
-    fn load(&self, addr: u16) -> u8 {
-        if (addr as usize) < self.data.len() {
-            return self.data[addr as usize].get();
-        }
+fn ax_to_machine_code(input: Box<dyn Read>, output: &mut dyn Write) -> Result<(), String> {
+    let mut lexer = compiler::lexer::Lexer::new(input);
+    let program = match compiler::parser::parse_program(&mut lexer) {
+        Ok(program) => program,
+        Err(err) => return Err(err.to_string()),
+    };
 
-        if addr >= 0x8000 && (addr as usize) < 0x8000 + self.display.len() {
-            return 0;
-        }
-
-        if addr == 0xff00 {
-            return 0;
-        }
-
-        if addr == 0xffff {
-            return 0;
-        }
-
-        println!("Load from wild address {}!", addr);
-        0
+    let mut gen = compiler::codegen::Context::new(&program);
+    gen.generate()?;
+    match output.write(&gen.code[..]) {
+        Err(err) => return Err(err.to_string()),
+        _ => (),
     }
 
-    fn store(&self, addr: u16, value: u8) {
-        if (addr as usize) < self.data.len() {
-            self.data[addr as usize].set(value);
-            return;
-        }
-
-        if addr >= 0x8000 && (addr as usize) < 0x8000 + self.display.len() {
-            return self.display.store(addr - 0x8000, value);
-        }
-
-        if addr == 0xff00 {
-            println!("Debug store: {}", value);
-            return;
-        }
-
-        if addr == 0xffff {
-            self.halt.set(true);
-            return;
-        }
-    }
+    Ok(())
 }
 
-fn usage(argv0: &str) {
-    println!("Usage: {} emulate  [--step] <path>", argv0);
-    println!("       {} assemble [in] [out]", argv0);
-    println!("       {} run      [--step] <path>", argv0);
-    println!("       {} parse    <path>", argv0);
-    println!("       {} compile  [in] [out]", argv0);
+fn ax_to_asm(input: Box<dyn Read>, output: &mut dyn Write) -> Result<(), String> {
+    let mut vec = Vec::new();
+    ax_to_machine_code(input, &mut vec)?;
+
+    for ibyte in vec {
+        let instr = isa::Instr::parse(ibyte);
+        match output.write(&format!("{}\n", instr).as_bytes()) {
+            Err(err) => return Err(err.to_string()),
+            _ => (),
+        }
+    }
+
+    Ok(())
+}
+
+fn asm_to_machine_code(mut input: Box<dyn Read>, output: &mut dyn Write) -> Result<(), String> {
+    assembler::assemble(&mut *input, output)
+}
+
+fn file_to_machine_code(input: Input) -> Result<Vec<u8>, String> {
+    let (mut infile, ftype) = input;
+    let mut code = Vec::new();
+    match ftype {
+        FileType::Ax => ax_to_machine_code(infile, &mut code)?,
+        FileType::Asm => asm_to_machine_code(infile, &mut code)?,
+        FileType::MachineCode => match infile.read_to_end(&mut code) {
+            Err(err) => return Err(err.to_string()),
+            _ => (),
+        }
+    }
+
+    Ok(code)
 }
 
 struct EmuOpts {
@@ -194,7 +118,7 @@ impl EmuOpts {
 }
 
 fn run_emulator(data: &Vec<u8>, opts: &EmuOpts) {
-    let memory = Memory::new();
+    let memory = devices::Memory::new();
     if data.len() > memory.data.len() {
         println!(
             "Program too long! Have {} bytes of RAM, program is {} bytes",
@@ -220,7 +144,7 @@ fn run_emulator(data: &Vec<u8>, opts: &EmuOpts) {
     };
 
     while !memory.halt.get() {
-        let instr = Instr::parse(memory.data[emu.iptr as usize].get());
+        let instr = isa::Instr::parse(memory.data[emu.iptr as usize].get());
 
         if opts.step {
             println!("\n0x{:04x} {}", emu.iptr, instr);
@@ -245,337 +169,105 @@ fn run_emulator(data: &Vec<u8>, opts: &EmuOpts) {
     }
 }
 
-fn do_emulate(argv0: &str, args: &mut env::Args) -> i32 {
-    let mut opts = EmuOpts::new();
-    let mut path: Option<String> = None;
-
-    for arg in args {
-        if arg == "--step" {
-            opts.step = true
-        } else if path.is_none() {
-            path = Some(arg)
-        } else {
-            usage(argv0);
-            return 1;
-        }
-    }
-
-    let path = match path {
-        Some(path) => path,
-        None => {
-            usage(&argv0);
-            return 1;
-        }
-    };
-
-    let data = match fs::read(&path) {
-        Ok(data) => data,
-        Err(err) => {
-            println!("{}: {}", path, err);
-            return 1;
-        }
-    };
-
-    run_emulator(&data, &opts);
-    0
+fn usage(argv0: &str) {
+    println!("Usage: {} [options] <input-file>", argv0);
+    println!();
+    println!("Options:");
+    println!("  -o <file>: Write result to <file>");
+    println!("  --run:     Run the emulator on the input file");
+    println!("  --step:    Step through in the emulator");
+    println!("  --hz <hz>: Run emulator at <hz> Hz");
 }
 
-fn do_assemble(argv0: &str, args: &mut env::Args) -> i32 {
-    let mut inpath: Option<String> = None;
-    let mut outpath: Option<String> = None;
-
-    for arg in args {
-        if inpath.is_none() {
-            inpath = Some(arg);
-        } else if outpath.is_none() {
-            outpath = Some(arg);
-        } else {
-            usage(argv0);
-            return 1;
-        }
+fn require_arg(name: &str, args: &mut env::Args) -> Result<String, String> {
+    match args.next() {
+        Some(arg) => Ok(arg),
+        None => Err(format!("Option '{}' requires an argument", name)),
     }
-
-    let mut instream: Box<dyn Read> = match inpath {
-        Some(path) => match fs::File::open(&path) {
-            Ok(f) => Box::new(f),
-            Err(err) => {
-                println!("{}: {}", path, err);
-                return 1;
-            }
-        },
-        None => Box::new(io::stdin()),
-    };
-
-    let mut outstream: Box<dyn Write> = match outpath {
-        Some(path) => match fs::File::create(&path) {
-            Ok(f) => Box::new(f),
-            Err(err) => {
-                println!("{}: {}", path, err);
-                return 1;
-            }
-        },
-        None => Box::new(io::stdout()),
-    };
-
-    if let Err(err) = assembler::assemble(&mut *instream, &mut *outstream) {
-        println!("{}", err);
-        return 1;
-    }
-
-    0
 }
 
-fn do_run(argv0: &str, args: &mut env::Args) -> i32 {
-    let mut opts = EmuOpts::new();
-    let mut path: Option<String> = None;
+fn main_impl() -> Result<(), String> {
+    let mut input: Option<Input> = None;
+    let mut output: Option<Output> = None;
+    let mut do_emulate = false;
+    let mut emu_opts = EmuOpts::new();
 
+    let mut args = env::args();
+    let argv0 = match args.next() {
+        Some(argv0) => argv0,
+        None => return Err("No argv[0]".to_string()),
+    };
+
+    let mut dashes = false;
     loop {
         let arg = match args.next() {
             Some(arg) => arg,
             None => break,
         };
 
-        if arg == "--step" {
-            opts.step = true;
-        } else if arg == "--hz" {
-            let hz = match args.next() {
-                Some(hz) => hz,
-                None => {
-                    println!("--hz requires an argument");
-                    return 1;
-                }
-            };
-
-            opts.hz = match hz.parse::<u32>() {
+        if !dashes && arg == "--help" {
+            usage(&argv0);
+            return Ok(());
+        } else if !dashes && arg == "-o" {
+            let val = require_arg(&arg, &mut args)?;
+            output = Some(create_file(Path::new(&val))?);
+        } else if !dashes && arg == "--run" {
+            do_emulate = true;
+        } else if !dashes && arg == "--step" {
+            emu_opts.step = true;
+        } else if !dashes && arg == "--hz" {
+            let val = require_arg(&arg, &mut args)?;
+            emu_opts.hz = match val.parse::<u32>() {
                 Ok(hz) => hz,
-                Err(err) => {
-                    println!("Failed to parse hz: {}", err.to_string());
-                    return 1;
-                }
-            }
-        } else if path.is_none() {
-            path = Some(arg)
+                Err(err) => return Err(err.to_string()),
+            };
+        } else if !dashes && arg == "--" {
+            dashes = true;
+        } else if !dashes && arg.chars().next() == Some('-') {
+            return Err(format!("Unknown option: {}", arg));
+        } else if input.is_none() {
+            input = Some(open_file(Path::new(&arg))?);
         } else {
-            usage(argv0);
-            return 1;
+            return Err("Too many arguments".to_string());
         }
     }
 
-    let path = match path {
-        Some(path) => path,
+    let input = match input {
+        Some(input) => input,
         None => {
             usage(&argv0);
-            return 1;
+            println!();
+            return Err("Missing 'input-file' argument".to_string());
         }
     };
 
-    let mut infile = match fs::File::open(&path) {
-        Ok(f) => f,
-        Err(err) => {
-            println!("{}: {}", path, err);
-            return 1;
-        }
-    };
-
-    let mut data: Vec<u8> = Vec::new();
-    if let Err(err) = assembler::assemble(&mut infile, &mut data) {
-        println!("{}", err);
-        return 1;
+    if do_emulate {
+        let code = file_to_machine_code(input)?;
+        run_emulator(&code, &emu_opts);
+        return Ok(());
     }
 
-    run_emulator(&data, &opts);
-    0
-}
-
-fn do_parse(argv0: &str, args: &mut env::Args) -> i32 {
-    let path = args.next();
-    if path.is_none() || args.next().is_some() {
-        usage(argv0);
-        return 1;
-    }
-
-    let path = path.unwrap();
-
-    let infile = match fs::File::open(&path) {
-        Ok(f) => f,
-        Err(err) => {
-            println!("{}: {}", path, err);
-            return 1;
-        }
-    };
-
-    let mut lexer = lexer::Lexer::new(Box::new(infile));
-    let program = match parser::parse_program(&mut lexer) {
-        Ok(program) => program,
-        Err(err) => {
-            println!("{}: {}", path, err);
-            return 1;
-        }
-    };
-
-    println!("Made AST: {:#?}", program);
-
-    0
-}
-
-fn do_compile(argv0: &str, args: &mut env::Args) -> i32 {
-    let mut inpath: Option<String> = None;
-    let mut outpath: Option<String> = None;
-
-    for arg in args {
-        if inpath.is_none() {
-            inpath = Some(arg);
-        } else if outpath.is_none() {
-            outpath = Some(arg);
-        } else {
-            usage(argv0);
-            return 1;
+    if let Some(output) = output {
+        let (infile, intype) = input;
+        let (mut outfile, outtype) = output;
+        let outfile = &mut *outfile;
+        return match (intype, outtype) {
+            (FileType::Ax, FileType::MachineCode) => ax_to_machine_code(infile, outfile),
+            (FileType::Ax, FileType::Asm) => ax_to_asm(infile, outfile),
+            (FileType::Asm, FileType::MachineCode) => asm_to_machine_code(infile, outfile),
+            _ => Err(format!("Cannot transform a {:?} file into a {:?} file", intype, outtype)),
         }
     }
 
-    let instream: Box<dyn Read> = match inpath {
-        Some(path) => match fs::File::open(&path) {
-            Ok(f) => Box::new(f),
-            Err(err) => {
-                println!("{}: {}", path, err);
-                return 1;
-            }
-        },
-        None => Box::new(io::stdin()),
-    };
-
-    let mut outstream: Box<dyn Write> = match outpath {
-        Some(path) => match fs::File::create(&path) {
-            Ok(f) => Box::new(f),
-            Err(err) => {
-                println!("{}: {}", path, err);
-                return 1;
-            }
-        },
-        None => Box::new(io::stdout()),
-    };
-
-    let mut lexer = lexer::Lexer::new(instream);
-    let program = match parser::parse_program(&mut lexer) {
-        Ok(program) => program,
-        Err(err) => {
-            println!("{}", err);
-            return 1;
-        }
-    };
-
-    let mut gen = codegen::Context::new(&program);
-    match gen.generate() {
-        Err(err) => {
-            println!("{}", err);
-            return 1;
-        }
-        _ => (),
-    }
-
-
-    let mut addr = 0u16;
-    let mut annotation_idx = 0;
-    let mut annotation_depth = 0;
-    let mut in_stack = false;
-    let mut in_stack_depth = 0;
-    let print_space = |depth| {
-        for _ in 0..depth {
-            print!("    ");
-        }
-    };
-
-    for instr in &gen.code {
-        loop {
-            if annotation_idx >= gen.annotations.len() {
-                break;
-            }
-
-            let (annotation_addr, annotation) = &gen.annotations[annotation_idx];
-            if *annotation_addr != addr {
-                break;
-            }
-
-            match annotation {
-                codegen::Annotation::Indent(text) => {
-                    print_space(annotation_depth);
-                    println!("; {}", text);
-                    annotation_depth += 1;
-
-                    if text == "Stack" {
-                        in_stack = true;
-                        in_stack_depth = 1;
-                        print_space(annotation_depth);
-                        println!("[Skipping stack bytes]");
-                    } else if in_stack {
-                        in_stack_depth += 1;
-                    }
-                }
-                codegen::Annotation::Dedent => {
-                    annotation_depth -= 1;
-                    if in_stack {
-                        in_stack_depth -= 1;
-                        if in_stack_depth == 0 {
-                            in_stack = false;
-                        }
-                    }
-                }
-            }
-
-            annotation_idx += 1;
-        }
-
-        if !in_stack {
-            print_space(annotation_depth);
-            println!("0x{:04x} {}", addr, isa::Instr::parse(*instr));
-        }
-
-        addr += 1;
-    }
-
-    match outstream.write_all(&gen.code) {
-        Err(err) => {
-            println!("{}", err);
-            return 1;
-        }
-        _ => (),
-    }
-
-    0
+    Ok(())
 }
 
 fn main() {
-    let mut args = env::args();
-    let argv0 = args.next().unwrap();
-
-    loop {
-        let arg = args.next();
-        if arg.is_none() {
-            break;
-        }
-        let arg = arg.unwrap();
-
-        if arg == "--help" || arg == "-h" {
-            usage(&argv0);
-            process::exit(0);
-        } else if arg.starts_with("-") {
-            usage(&argv0);
-            process::exit(1);
-        } else if arg == "emulate" {
-            process::exit(do_emulate(&argv0, &mut args));
-        } else if arg == "assemble" {
-            process::exit(do_assemble(&argv0, &mut args));
-        } else if arg == "run" {
-            process::exit(do_run(&argv0, &mut args));
-        } else if arg == "parse" {
-            process::exit(do_parse(&argv0, &mut args));
-        } else if arg == "compile" {
-            process::exit(do_compile(&argv0, &mut args));
-        } else {
-            usage(&argv0);
+    match main_impl() {
+        Err(err) => {
+            println!("Error: {}", err);
             process::exit(1);
         }
+        Ok(()) => (),
     }
-
-    usage(&argv0);
 }

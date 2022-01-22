@@ -1,5 +1,5 @@
 [package]
-name = "axa-cpu"
+name = "axa"
 version = "0.1.0"
 edition = "2021"
 
