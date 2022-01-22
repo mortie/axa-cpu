@@ -90,19 +90,19 @@ accumulator.
 
 Here are all the R-type instructions:
 
-| OpCode | Mnemonic | Expression  | Note                             |
-|--------|----------|-------------|----------------------------------|
-| 0000   | ADD      | D = D + S   |                                  |
-| 0001   | SUB      | D = D - S   |                                  |
-| 0010   | XOR      | D = D XOR S |                                  |
-| 0011   | AND      | D = D AND S |                                  |
-| 0100   | OR       | D = D OR S  |                                  |
-| 0101   | MOV      | D = S       |                                  |
-| 0110   | SHR      | D = S >> 1  |                                  |
-| 0111   | CMP      | _ = D - S   | No value is written, only flags  |
-| 1000   | ADDC     | D = D + S   | Add with cin from carry flag     |
-| 1001   | SHRC     | D = S >> 1  | Shift in bit from carry flag     |
-| 1010   | CMPC     | _ = D - S   | Compare with cin from carry flag |
+| OpCode | Mnemonic | Expression  | Note                                            |
+|--------|----------|-------------|-------------------------------------------------|
+| 0000   | ADD      | D = D + S   |                                                 |
+| 0001   | SUB      | D = D - S   |                                                 |
+| 0010   | XOR      | D = D XOR S |                                                 |
+| 0011   | AND      | D = D AND S |                                                 |
+| 0100   | OR       | D = D OR S  |                                                 |
+| 0101   | MOV      | D = S       |                                                 |
+| 0110   | SHR      | D = S >> 1  |                                                 |
+| 0111   | CMP      | _ = D - S   | No value is written, only flags                 |
+| 1000   | ADDC     | D = D + S   | ADD but with cin from carry flag                |
+| 1001   | SHRC     | D = S >> 1  | SHR but with the shifted-in bit from carry flag |
+| 1010   | CMPC     | _ = D - S   | CMP but with cin from carry flag                |
 
 ### J-type instructions
 
