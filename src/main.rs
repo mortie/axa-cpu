@@ -8,10 +8,39 @@ use std::thread;
 use std::env;
 use std::fs::File;
 use std::io;
+use std::io::sink;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
 use std::process;
+
+struct EmuOpts {
+    step: bool,
+    hz: u32,
+}
+
+impl EmuOpts {
+    fn new() -> Self {
+        Self {
+            step: false,
+            hz: 20,
+        }
+    }
+}
+
+struct Opts {
+    do_emulate: bool,
+    do_print_asm: bool,
+}
+
+impl Opts {
+    fn new() -> Self {
+        Self {
+            do_emulate: false,
+            do_print_asm: false,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 enum FileType {
@@ -52,7 +81,68 @@ fn create_file(path: &Path) -> Result<Output, String> {
     Ok((w, t))
 }
 
-fn ax_to_machine_code(input: Box<dyn Read>, output: &mut dyn Write) -> Result<(), String> {
+fn print_asm(gen: &compiler::codegen::Context) {
+    let mut addr = 0u16;
+    let mut annotation_idx = 0;
+    let mut annotation_depth = 0;
+    let mut in_stack = false;
+    let mut in_stack_depth = 0;
+    let print_space = |depth| {
+        for _ in 0..depth {
+            print!("    ");
+        }
+    };
+
+    for instr in &gen.code {
+        loop {
+            if annotation_idx >= gen.annotations.len() {
+                break;
+            }
+
+            let (annotation_addr, annotation) = &gen.annotations[annotation_idx];
+            if *annotation_addr != addr {
+                break;
+            }
+
+            match annotation {
+                compiler::codegen::Annotation::Indent(text) => {
+                    print_space(annotation_depth);
+                    println!("; {}", text);
+                    annotation_depth += 1;
+
+                    if text == "Stack" {
+                        in_stack = true;
+                        in_stack_depth = 1;
+                        print_space(annotation_depth);
+                        println!("[Skipping stack bytes]");
+                    } else if in_stack {
+                        in_stack_depth += 1;
+                    }
+                }
+                compiler::codegen::Annotation::Dedent => {
+                    annotation_depth -= 1;
+                    if in_stack {
+                        in_stack_depth -= 1;
+                        if in_stack_depth == 0 {
+                            in_stack = false;
+                        }
+                    }
+                }
+            }
+
+            annotation_idx += 1;
+        }
+
+        if !in_stack {
+            print_space(annotation_depth);
+            println!("0x{:04x} {}", addr, isa::Instr::parse(*instr));
+        }
+
+        addr += 1;
+    }
+}
+
+fn ax_to_machine_code(input: Box<dyn Read>, output: &mut dyn Write, opts: Opts) -> Result<(), String> {
     let mut lexer = compiler::lexer::Lexer::new(input);
     let program = match compiler::parser::parse_program(&mut lexer) {
         Ok(program) => program,
@@ -66,12 +156,16 @@ fn ax_to_machine_code(input: Box<dyn Read>, output: &mut dyn Write) -> Result<()
         _ => (),
     }
 
+    if opts.do_print_asm {
+        print_asm(&gen);
+    }
+
     Ok(())
 }
 
-fn ax_to_asm(input: Box<dyn Read>, output: &mut dyn Write) -> Result<(), String> {
+fn ax_to_asm(input: Box<dyn Read>, output: &mut dyn Write, opts: Opts) -> Result<(), String> {
     let mut vec = Vec::new();
-    ax_to_machine_code(input, &mut vec)?;
+    ax_to_machine_code(input, &mut vec, opts)?;
 
     for ibyte in vec {
         let instr = isa::Instr::parse(ibyte);
@@ -84,16 +178,16 @@ fn ax_to_asm(input: Box<dyn Read>, output: &mut dyn Write) -> Result<(), String>
     Ok(())
 }
 
-fn asm_to_machine_code(mut input: Box<dyn Read>, output: &mut dyn Write) -> Result<(), String> {
+fn asm_to_machine_code(mut input: Box<dyn Read>, output: &mut dyn Write, _opts: Opts) -> Result<(), String> {
     assembler::assemble(&mut *input, output)
 }
 
-fn file_to_machine_code(input: Input) -> Result<Vec<u8>, String> {
+fn file_to_machine_code(input: Input, opts: Opts) -> Result<Vec<u8>, String> {
     let (mut infile, ftype) = input;
     let mut code = Vec::new();
     match ftype {
-        FileType::Ax => ax_to_machine_code(infile, &mut code)?,
-        FileType::Asm => asm_to_machine_code(infile, &mut code)?,
+        FileType::Ax => ax_to_machine_code(infile, &mut code, opts)?,
+        FileType::Asm => asm_to_machine_code(infile, &mut code, opts)?,
         FileType::MachineCode => match infile.read_to_end(&mut code) {
             Err(err) => return Err(err.to_string()),
             _ => (),
@@ -101,20 +195,6 @@ fn file_to_machine_code(input: Input) -> Result<Vec<u8>, String> {
     }
 
     Ok(code)
-}
-
-struct EmuOpts {
-    step: bool,
-    hz: u32,
-}
-
-impl EmuOpts {
-    fn new() -> Self {
-        Self {
-            step: false,
-            hz: 20,
-        }
-    }
 }
 
 fn run_emulator(data: &Vec<u8>, opts: &EmuOpts) {
@@ -173,10 +253,11 @@ fn usage(argv0: &str) {
     println!("Usage: {} [options] <input-file>", argv0);
     println!();
     println!("Options:");
-    println!("  -o <file>: Write result to <file>");
-    println!("  --run:     Run the emulator on the input file");
-    println!("  --step:    Step through in the emulator");
-    println!("  --hz <hz>: Run emulator at <hz> Hz");
+    println!("  -o <file>:   Write result to <file>");
+    println!("  --print-asm: Print annotated assembly code when compiling ax files");
+    println!("  --run:       Run the emulator on the input file");
+    println!("  --step:      Step through in the emulator");
+    println!("  --hz <hz>:   Run emulator at <hz> Hz");
 }
 
 fn require_arg(name: &str, args: &mut env::Args) -> Result<String, String> {
@@ -189,7 +270,7 @@ fn require_arg(name: &str, args: &mut env::Args) -> Result<String, String> {
 fn main_impl() -> Result<(), String> {
     let mut input: Option<Input> = None;
     let mut output: Option<Output> = None;
-    let mut do_emulate = false;
+    let mut opts = Opts::new();
     let mut emu_opts = EmuOpts::new();
 
     let mut args = env::args();
@@ -211,8 +292,10 @@ fn main_impl() -> Result<(), String> {
         } else if !dashes && arg == "-o" {
             let val = require_arg(&arg, &mut args)?;
             output = Some(create_file(Path::new(&val))?);
+        } else if !dashes && arg == "--print-asm" {
+            opts.do_print_asm = true;
         } else if !dashes && arg == "--run" {
-            do_emulate = true;
+            opts.do_emulate = true;
         } else if !dashes && arg == "--step" {
             emu_opts.step = true;
         } else if !dashes && arg == "--hz" {
@@ -241,25 +324,26 @@ fn main_impl() -> Result<(), String> {
         }
     };
 
-    if do_emulate {
-        let code = file_to_machine_code(input)?;
+    let output = match output {
+        Some(output) => output,
+        None => (Box::new(sink()) as Box<dyn Write>, FileType::MachineCode),
+    };
+
+    if opts.do_emulate {
+        let code = file_to_machine_code(input, opts)?;
         run_emulator(&code, &emu_opts);
         return Ok(());
     }
 
-    if let Some(output) = output {
-        let (infile, intype) = input;
-        let (mut outfile, outtype) = output;
-        let outfile = &mut *outfile;
-        return match (intype, outtype) {
-            (FileType::Ax, FileType::MachineCode) => ax_to_machine_code(infile, outfile),
-            (FileType::Ax, FileType::Asm) => ax_to_asm(infile, outfile),
-            (FileType::Asm, FileType::MachineCode) => asm_to_machine_code(infile, outfile),
-            _ => Err(format!("Cannot transform a {:?} file into a {:?} file", intype, outtype)),
-        }
+    let (infile, intype) = input;
+    let (mut outfile, outtype) = output;
+    let outfile = &mut *outfile;
+    match (intype, outtype) {
+        (FileType::Ax, FileType::MachineCode) => ax_to_machine_code(infile, outfile, opts),
+        (FileType::Ax, FileType::Asm) => ax_to_asm(infile, outfile, opts),
+        (FileType::Asm, FileType::MachineCode) => asm_to_machine_code(infile, outfile, opts),
+        _ => Err(format!("Cannot transform a {:?} file into a {:?} file", intype, outtype)),
     }
-
-    Ok(())
 }
 
 fn main() {
