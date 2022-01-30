@@ -27,7 +27,7 @@ impl fmt::Display for Reg {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RegOp {
     Add,
     Sub,

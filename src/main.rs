@@ -1,18 +1,18 @@
 mod assembler;
 mod compiler;
+mod devices;
 mod emulator;
 mod isa;
-mod devices;
 
-use std::thread;
 use std::env;
 use std::fs::File;
 use std::io;
 use std::io::sink;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::time::Duration;
 use std::process;
+use std::thread;
+use std::time::Duration;
 
 struct EmuOpts {
     step: bool,
@@ -81,7 +81,8 @@ fn create_file(path: &Path) -> Result<Output, String> {
     Ok((w, t))
 }
 
-fn print_asm(gen: &compiler::codegen::Context) {
+fn print_asm(_gen: &compiler::codegen::Context) {
+    /*
     let mut addr = 0u16;
     let mut annotation_idx = 0;
     let mut annotation_depth = 0;
@@ -140,24 +141,32 @@ fn print_asm(gen: &compiler::codegen::Context) {
 
         addr += 1;
     }
+    */
 }
 
-fn ax_to_machine_code(input: Box<dyn Read>, output: &mut dyn Write, opts: Opts) -> Result<(), String> {
+fn ax_to_machine_code(
+    input: Box<dyn Read>,
+    output: &mut dyn Write,
+    opts: Opts,
+) -> Result<(), String> {
     let mut lexer = compiler::lexer::Lexer::new(input);
     let program = match compiler::parser::parse_program(&mut lexer) {
         Ok(program) => program,
         Err(err) => return Err(err.to_string()),
     };
 
-    let mut gen = compiler::codegen::Context::new(&program);
-    gen.generate()?;
-    match output.write(&gen.code[..]) {
+    let gen = compiler::codegen::Context::new(program);
+    let code = compiler::codegen::generate(gen)?;
+    match output.write(&code[..]) {
         Err(err) => return Err(err.to_string()),
         _ => (),
     }
 
     if opts.do_print_asm {
-        print_asm(&gen);
+        //print_asm(&gen);
+        for idx in 0..code.len() {
+            println!("0x{:04x} {}", idx, isa::Instr::parse(code[idx]));
+        }
     }
 
     Ok(())
@@ -178,7 +187,11 @@ fn ax_to_asm(input: Box<dyn Read>, output: &mut dyn Write, opts: Opts) -> Result
     Ok(())
 }
 
-fn asm_to_machine_code(mut input: Box<dyn Read>, output: &mut dyn Write, _opts: Opts) -> Result<(), String> {
+fn asm_to_machine_code(
+    mut input: Box<dyn Read>,
+    output: &mut dyn Write,
+    _opts: Opts,
+) -> Result<(), String> {
     assembler::assemble(&mut *input, output)
 }
 
@@ -191,7 +204,7 @@ fn file_to_machine_code(input: Input, opts: Opts) -> Result<Vec<u8>, String> {
         FileType::MachineCode => match infile.read_to_end(&mut code) {
             Err(err) => return Err(err.to_string()),
             _ => (),
-        }
+        },
     }
 
     Ok(code)
@@ -342,7 +355,10 @@ fn main_impl() -> Result<(), String> {
         (FileType::Ax, FileType::MachineCode) => ax_to_machine_code(infile, outfile, opts),
         (FileType::Ax, FileType::Asm) => ax_to_asm(infile, outfile, opts),
         (FileType::Asm, FileType::MachineCode) => asm_to_machine_code(infile, outfile, opts),
-        _ => Err(format!("Cannot transform a {:?} file into a {:?} file", intype, outtype)),
+        _ => Err(format!(
+            "Cannot transform a {:?} file into a {:?} file",
+            intype, outtype
+        )),
     }
 }
 

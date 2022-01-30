@@ -1,164 +1,307 @@
-use super::super::assembler;
 use super::super::isa;
-use super::ast::*;
+use super::ast;
 use std::collections::HashMap;
-use std::io::Write;
 
-pub enum Annotation {
-    Indent(String),
-    Dedent,
+struct Code {
+    code: Vec<u8>,
+    location: u16,
 }
 
-pub struct Context<'a> {
-    pub code: Vec<u8>,
-    calls: Vec<(usize, String)>,
-    program: &'a Program,
-    pub annotations: Vec<(u16, Annotation)>,
-    optimize: bool,
-}
-
-impl<'a> Context<'a> {
-    pub fn new(program: &'a Program) -> Self {
+impl Code {
+    fn new(location: u16) -> Self {
         Self {
             code: Vec::new(),
-            calls: Vec::new(),
-            program,
-            annotations: Vec::new(),
-            optimize: true,
+            location,
         }
     }
 
-    fn location(&self) -> usize {
-        self.code.len()
-    }
-
-    fn patch(&mut self, loc: usize, val: u8) {
-        let lo = val & 0x0f;
-        let hi = (val & 0xf0) >> 4;
-        self.code[loc] |= lo;
-        self.code[loc + 1] |= hi;
-    }
-
-    fn asm(&mut self, s: &str) {
-        let mut ctx = assembler::Context::new();
-        if let Err(err) = assembler::assemble_line(s, &mut self.code, &mut ctx) {
-            panic!("Assembler error: {}", err);
+    fn fork(&self) -> Self {
+        Self {
+            code: Vec::new(),
+            location: self.location,
         }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        for ibyte in &other.code {
+            self.code.push(*ibyte);
+            self.location += 1;
+        }
+
+        assert_eq!(self.location, other.location);
     }
 
     fn instr(&mut self, instr: isa::Instr) {
-        if let Err(err) = self.code.write(&[instr.format()]) {
-            panic!("{}", err); // This can't really happen with Vec I think
-        }
+        self.code.push(instr.format());
+        self.location += 1;
     }
 
-    fn indent(&mut self, text: String) {
-        self.annotations.push((self.location() as u16, Annotation::Indent(text)));
-    }
-    fn dedent(&mut self) {
-        self.annotations.push((self.location() as u16, Annotation::Dedent));
+    fn imml(&mut self, val: u8) {
+        self.instr(isa::Instr::Imm(isa::ImmOp::Imml, val));
     }
 
-    fn gen_call(&mut self, target: String) {
-        self.indent(format!("Call {}", target));
-        self.calls.push((self.location(), target));
-        self.asm("mov acc cs");
-        self.asm("mov rv acc");
-        self.asm("imml 0");
-        self.asm("immh 0");
-        self.asm("mov cs acc");
-        self.asm("imml 0");
-        self.asm("immh 0");
-        self.asm("call");
-        self.dedent();
+    fn immh(&mut self, val: u8) {
+        self.instr(isa::Instr::Imm(isa::ImmOp::Immh, val));
     }
 
-    pub fn generate(&mut self) -> Result<(), String> {
-        // Jump past data/stack
-        self.indent("Start".to_string());
-        self.asm("imml 0x01");
-        self.asm("mov cs acc");
-        self.asm("imml 0");
-        self.asm("jmp");
-        self.dedent();
+    fn reg_op_acc(&mut self, op: isa::RegOp, reg: isa::Reg) {
+        self.instr(isa::Instr::Reg(op, false, reg));
+    }
 
-        // Space for data
-        self.indent("Data".to_string());
-        let data_base = self.code.len();
-        for _ in 0..self.program.data_decls.len() {
-            self.code.push(0);
+    fn acc_op_reg(&mut self, op: isa::RegOp, reg: isa::Reg) {
+        self.instr(isa::Instr::Reg(op, true, reg));
+    }
+
+    fn nop(&mut self) {
+        self.immh(0);
+    }
+
+    fn pad(&mut self, count: usize) {
+        for _ in 0..count {
+            self.nop();
         }
-        self.dedent();
-
-        // Initialize data
-        for (_, decl) in &self.program.data_decls {
-            let val = (decl.val.eval(self.program)? & 0xff) as u8;
-            self.code[data_base + decl.index as usize] = val;
-        }
-
-        // Zero out stack
-        self.indent("Stack".to_string());
-        let stack_base = self.code.len();
-        while self.code.len() < 256 {
-            self.code.push(0);
-        }
-        self.dedent();
-
-        self.indent("Loader".to_string());
-
-        // Set up stack
-        self.asm(&format!("imml {}", stack_base));
-        self.asm("mov sp acc");
-
-        // Call main
-        self.gen_call("main".to_string());
-
-        // Infinite loop after main terminates
-        self.asm("imml 0");
-        self.asm("b");
-
-        self.dedent();
-
-        let mut funcs: HashMap<String, usize> = HashMap::new();
-
-        // Functions
-        for decl in &self.program.func_decls {
-            funcs.insert(decl.name.clone(), self.location());
-            self.indent(format!("Func {}", decl.name));
-            gen_func_decl(decl, self)?;
-            self.dedent();
-        }
-
-        // Fix up function calls
-        for (loc, name) in &self.calls {
-            if let Some(addr) = funcs.get(name) {
-                /* Rust doesn't let me write this code:
-                    self.patch(loc + 3, ((addr & 0xff00) >> 8) as u8);
-                    self.patch(loc + 6, (addr & 0x00ff) as u8);
-                */
-
-                let val = ((addr & 0xff00) >> 8) as u8;
-                let lo = val & 0x0f;
-                let hi = (val & 0xf0) >> 4;
-                self.code[loc + 2] |= lo;
-                self.code[loc + 3] |= hi;
-
-                let val = (addr & 0x00ff) as u8;
-                let lo = val & 0x0f;
-                let hi = (val & 0xf0) >> 4;
-                self.code[loc + 5] |= lo;
-                self.code[loc + 6] |= hi;
-            }
-        }
-
-        Ok(())
     }
 }
 
-fn expr_is_zero_page(expr: &ConstExpr, prog: &Program) -> bool {
+pub struct CpuState {
+    acc: Option<u8>,
+    touched_acc: bool,
+    regs: [Option<u8>; 8],
+    touched_regs: [bool; 8],
+    returned: bool,
+}
+
+impl CpuState {
+    fn new() -> Self {
+        Self {
+            acc: None,
+            touched_acc: false,
+            regs: [None; 8],
+            touched_regs: [false; 8],
+            returned: false,
+        }
+    }
+
+    fn new_cluttered() -> Self {
+        Self {
+            acc: None,
+            touched_acc: true,
+            regs: [None; 8],
+            touched_regs: [true; 8],
+            returned: false,
+        }
+    }
+
+    fn merge(&mut self, other: &Self) {
+        if other.touched_acc {
+            self.touched_acc = true;
+            if self.acc != other.acc {
+                self.acc = None;
+            }
+        }
+
+        for reg in 0..8 {
+            if other.touched_regs[reg] {
+                self.touched_regs[reg] = true;
+                if self.regs[reg] != other.regs[reg] {
+                    self.regs[reg] = None;
+                }
+            }
+        }
+
+        if !other.returned {
+            self.returned = false;
+        }
+    }
+
+    fn fork(&self) -> Self {
+        Self {
+            acc: self.acc,
+            touched_acc: false,
+            regs: self.regs,
+            touched_regs: [false; 8],
+            returned: false,
+        }
+    }
+
+    fn set_acc_to_val(&mut self, val: u8, code: &mut Code) {
+        if self.acc == Some(val) {
+            return;
+        }
+
+        match self.acc {
+            None => {
+                code.imml(val);
+                if val > 0x0f {
+                    code.immh(val);
+                }
+            }
+            Some(old) => {
+                if old | (val << 4) == val {
+                    code.immh(val);
+                } else if val & 0x0f == val {
+                    code.imml(val);
+                } else {
+                    code.imml(val);
+                    code.immh(val);
+                }
+            }
+        }
+
+        self.touched_acc = true;
+        self.acc = Some(val);
+    }
+
+    fn set_acc_to_reg(&mut self, reg: isa::Reg, code: &mut Code) {
+        if self.acc.is_some() && self.acc == self.regs[reg as usize] {
+            return;
+        }
+
+        code.acc_op_reg(isa::RegOp::Mov, reg);
+        self.touched_acc = true;
+        self.acc = self.regs[reg as usize];
+    }
+
+    fn set_reg_to_val(&mut self, reg: isa::Reg, val: u8, code: &mut Code) {
+        if self.regs[reg as usize] == Some(val) {
+            return;
+        }
+
+        self.set_acc_to_val(val, code);
+        code.reg_op_acc(isa::RegOp::Mov, reg);
+        self.touched_regs[reg as usize] = true;
+        self.regs[reg as usize] = Some(val);
+    }
+
+    fn set_reg_to_reg(&mut self, dest: isa::Reg, src: isa::Reg, code: &mut Code) {
+        if self.regs[dest as usize].is_some() && self.regs[dest as usize] == self.regs[src as usize]
+        {
+            return;
+        }
+
+        self.set_acc_to_reg(src, code);
+        code.reg_op_acc(isa::RegOp::Mov, dest);
+        self.touched_regs[dest as usize] = true;
+        self.regs[dest as usize] = self.regs[src as usize];
+    }
+
+    fn reg_op_val(&mut self, dest: isa::Reg, op: isa::RegOp, src: u8, code: &mut Code) {
+        if op == isa::RegOp::Mov {
+            self.set_reg_to_val(dest, src, code);
+            return;
+        }
+
+        self.set_acc_to_val(src, code);
+        code.reg_op_acc(op.clone(), dest);
+
+        match op {
+            isa::RegOp::Cmp | isa::RegOp::Cmpc => (),
+            _ => {
+                self.touched_regs[dest as usize] = true;
+                self.regs[dest as usize] = None;
+            }
+        }
+    }
+
+    fn reg_op_reg(&mut self, dest: isa::Reg, op: isa::RegOp, src: isa::Reg, code: &mut Code) {
+        if op == isa::RegOp::Mov {
+            self.set_reg_to_reg(dest, src, code);
+            return;
+        }
+
+        self.set_acc_to_reg(src, code);
+        code.reg_op_acc(op.clone(), dest);
+
+        match op {
+            isa::RegOp::Cmp | isa::RegOp::Cmpc => (),
+            _ => {
+                self.touched_regs[dest as usize] = true;
+                self.regs[dest as usize] = None;
+            }
+        }
+    }
+
+    fn reg_load(&mut self, reg: isa::Reg, dbit: bool, code: &mut Code) {
+        code.instr(isa::Instr::Mem(isa::MemOp::Ld, dbit, reg));
+        self.touched_regs[reg as usize] = true;
+        self.regs[reg as usize] = None;
+    }
+
+    fn reg_store(&mut self, reg: isa::Reg, dbit: bool, code: &mut Code) {
+        code.instr(isa::Instr::Mem(isa::MemOp::St, dbit, reg));
+    }
+
+    fn stack_push(&mut self, reg: isa::Reg, code: &mut Code) {
+        self.set_acc_to_reg(isa::Reg::SP, code);
+        self.reg_store(reg, false, code);
+        self.reg_op_val(isa::Reg::SP, isa::RegOp::Add, 1, code);
+    }
+
+    fn stack_pop(&mut self, reg: isa::Reg, code: &mut Code) {
+        self.reg_op_val(isa::Reg::SP, isa::RegOp::Sub, 1, code);
+        self.set_acc_to_reg(isa::Reg::SP, code);
+        self.reg_load(reg, false, code);
+    }
+
+    fn clobber_all(&mut self) {
+        self.acc = None;
+        for reg in 0..8 {
+            self.regs[reg as usize] = None;
+        }
+    }
+
+    fn touch_all(&mut self) {
+        self.touched_acc = true;
+        for reg in 0..8 {
+            self.touched_regs[reg as usize] = true;
+        }
+    }
+}
+
+struct FunctionInfo {
+    addr: u16,
+    length: u16,
+    post_state: CpuState,
+    is_leaf: bool,
+}
+
+impl FunctionInfo {
+    fn new() -> Self {
+        Self {
+            addr: 0,
+            length: 0,
+            post_state: CpuState::new(),
+            is_leaf: false,
+        }
+    }
+}
+
+pub struct Context {
+    pub program: ast::Program,
+    functions: Vec<FunctionInfo>,
+    function_names: HashMap<String, usize>,
+    current_func_is_leaf: bool,
+}
+
+impl Context {
+    pub fn new(program: ast::Program) -> Self {
+        Self {
+            program,
+            functions: Vec::new(),
+            function_names: HashMap::new(),
+            current_func_is_leaf: false,
+        }
+    }
+
+    fn current_func(&self) -> &FunctionInfo {
+        return self.functions.last().unwrap();
+    }
+}
+
+fn expr_is_zero_page(expr: &ast::ConstExpr, prog: &ast::Program) -> bool {
     match expr {
-        ConstExpr::Literal(..) => false,
-        ConstExpr::Constant(name) => {
+        ast::ConstExpr::Literal(..) => false,
+        ast::ConstExpr::Constant(name) => {
             if prog.const_decls.contains_key(name) {
                 false
             } else if prog.data_decls.contains_key(name) {
@@ -167,294 +310,491 @@ fn expr_is_zero_page(expr: &ConstExpr, prog: &Program) -> bool {
                 false
             }
         }
-        ConstExpr::BinExpr(a, .., b) => expr_is_zero_page(a, prog) || expr_is_zero_page(b, prog),
+        ast::ConstExpr::BinExpr(a, .., b) => {
+            expr_is_zero_page(a, prog) || expr_is_zero_page(b, prog)
+        }
     }
 }
 
-fn optimize(unoptimized: &[u8]) -> Vec<u8> {
-    use isa::{ImmOp, Instr};
+fn expr_get_dbit(expr: &ast::ConstExpr, prog: &ast::Program) -> bool {
+    !expr_is_zero_page(expr, prog)
+}
 
-    let mut optimized: Vec<u8> = Vec::new();
-    let mut acc_state: Option<u8> = None;
+fn acc_get_dbit(acc: &ast::Acc, prog: &ast::Program) -> bool {
+    match acc {
+        ast::Acc::Const(expr) => expr_get_dbit(expr, prog),
+        _ => false,
+    }
+}
 
-    optimized.reserve(unoptimized.len());
-    let mut idx = 0usize;
-    while idx < unoptimized.len() {
-        let ibyte = unoptimized[idx];
-        let instr = isa::Instr::parse(ibyte);
+fn gen_set_reg(
+    ctx: &Context,
+    state: &mut CpuState,
+    reg: isa::Reg,
+    acc: &ast::Acc,
+    code: &mut Code,
+) -> Result<(), String> {
+    match acc {
+        ast::Acc::Const(expr) => state.set_reg_to_val(reg, expr.eval(&ctx.program)? as u8, code),
+        ast::Acc::Reg(src) => state.set_reg_to_reg(reg, *src, code),
+    }
 
-        let next_instr;
-        if idx < unoptimized.len() - 1 {
-            next_instr = Some(isa::Instr::parse(unoptimized[idx + 1]));
+    Ok(())
+}
+
+fn gen_set_acc(
+    ctx: &Context,
+    state: &mut CpuState,
+    acc: &ast::Acc,
+    code: &mut Code,
+) -> Result<(), String> {
+    match acc {
+        ast::Acc::Const(expr) => state.set_acc_to_val(expr.eval(&ctx.program)? as u8, code),
+        ast::Acc::Reg(src) => state.set_acc_to_reg(*src, code),
+    }
+
+    Ok(())
+}
+
+fn block_has_func_call(block: &ast::Block) -> bool {
+    for statm in block {
+        match statm {
+            ast::Statm::If(_cond, a, b) => {
+                if block_has_func_call(a) || block_has_func_call(b) {
+                    return true;
+                }
+            }
+            ast::Statm::Loop(block) => {
+                if block_has_func_call(block) {
+                    return true;
+                }
+            }
+            ast::Statm::While(_cond, block) => {
+                if block_has_func_call(block) {
+                    return true;
+                }
+            }
+            ast::Statm::RegAssign(..) => (),
+            ast::Statm::Load(..) => (),
+            ast::Statm::Store(..) => (),
+            ast::Statm::Call(..) => return true,
+            ast::Statm::Return(..) => (),
+        }
+    }
+
+    false
+}
+
+pub fn generate(mut ctx: Context) -> Result<Vec<u8>, String> {
+    let func_decls = ctx.program.func_decls;
+    ctx.program.func_decls = vec![];
+    let mut code = Code::new(0);
+    for func in &func_decls {
+        let func_info = FunctionInfo {
+            addr: code.location,
+            length: 0,
+            post_state: CpuState::new_cluttered(),
+            is_leaf: !block_has_func_call(&func.statms),
+        };
+
+        ctx.function_names
+            .insert(func.name.clone(), ctx.functions.len());
+        ctx.functions.push(func_info);
+
+        let mut state = CpuState::new();
+        let start = code.location;
+        gen_function(&mut ctx, &mut state, func, &mut code)?;
+        ctx.functions.last_mut().unwrap().post_state = state;
+        ctx.functions.last_mut().unwrap().length = code.location - start;
+    }
+
+    ctx.program.func_decls = func_decls;
+    Ok(code.code)
+}
+
+fn gen_function(
+    ctx: &Context,
+    state: &mut CpuState,
+    decl: &ast::FuncDecl,
+    code: &mut Code,
+) -> Result<(), String> {
+    if !ctx.current_func().is_leaf {
+        state.stack_push(isa::Reg::RA, code); // Push return address
+        state.stack_push(isa::Reg::RV, code); // Push return segment (stored in RV)
+    }
+
+    gen_block(ctx, state, &decl.statms, code)?;
+
+    // Need to generate an implicit return if there are paths which don't return
+    if !state.returned {
+        gen_return_statm(ctx, state, &None, code)?;
+    }
+
+    Ok(())
+}
+
+fn gen_block(
+    ctx: &Context,
+    state: &mut CpuState,
+    block: &ast::Block,
+    code: &mut Code,
+) -> Result<(), String> {
+    for statm in block {
+        gen_statm(ctx, state, statm, code)?;
+    }
+
+    Ok(())
+}
+
+fn gen_statm(
+    ctx: &Context,
+    state: &mut CpuState,
+    statm: &ast::Statm,
+    code: &mut Code,
+) -> Result<(), String> {
+    match statm {
+        ast::Statm::If(cond, if_block, else_block) => {
+            gen_if_statm(ctx, state, cond, if_block, else_block, code)
+        }
+        ast::Statm::Loop(block) => gen_loop_statm(ctx, state, block, code),
+        ast::Statm::While(cond, block) => gen_while_statm(ctx, state, cond, block, code),
+        ast::Statm::RegAssign(reg, op, acc) => gen_reg_assign_statm(ctx, state, reg, op, acc, code),
+        ast::Statm::Load(reg, acc) => gen_load_statm(ctx, state, reg, acc, code),
+        ast::Statm::Store(acc, reg) => gen_store_statm(ctx, state, acc, reg, code),
+        ast::Statm::Call(name) => gen_call_statm(ctx, state, name, code),
+        ast::Statm::Return(ret) => gen_return_statm(ctx, state, ret, code),
+    }
+}
+
+fn gen_jump_unless(
+    ctx: &Context,
+    state: &mut CpuState,
+    cond: &ast::Condition,
+    dist: i8,
+    code: &mut Code,
+) -> Result<(), String> {
+    let acc = match cond {
+        ast::Condition::Eq(_, acc) => acc,
+        ast::Condition::Neq(_, acc) => acc,
+        ast::Condition::Gt(_, acc) => acc,
+        ast::Condition::Ge(_, acc) => acc,
+        ast::Condition::Lt(_, acc) => acc,
+        ast::Condition::Le(_, acc) => acc,
+    };
+
+    let (dbit, dist) = if dist < 0 {
+        (true, (dist & 0x0f) as u8)
+    } else {
+        (false, dist as u8)
+    };
+
+    gen_set_acc(ctx, state, acc, code)?;
+    match cond {
+        ast::Condition::Eq(..) => return Err("Unsupported condition".to_string()),
+        ast::Condition::Neq(reg, _) => {
+            code.instr(isa::Instr::Reg(isa::RegOp::Cmp, false, *reg));
+            state.set_acc_to_val(dist, code);
+            code.instr(isa::Instr::Branch(isa::BranchOp::Beq, dbit));
+        }
+        ast::Condition::Gt(reg, _) => {
+            code.instr(isa::Instr::Reg(isa::RegOp::Cmp, false, *reg));
+            state.set_acc_to_val(dist, code);
+            code.instr(isa::Instr::Branch(isa::BranchOp::Bgt, dbit));
+        }
+        ast::Condition::Ge(reg, _) => {
+            code.instr(isa::Instr::Reg(isa::RegOp::Cmp, false, *reg));
+            state.set_acc_to_val(dist, code);
+            code.instr(isa::Instr::Branch(isa::BranchOp::Bge, dbit));
+        }
+        ast::Condition::Lt(reg, _) => {
+            code.instr(isa::Instr::Reg(isa::RegOp::Cmp, true, *reg));
+            state.set_acc_to_val(dist, code);
+            code.instr(isa::Instr::Branch(isa::BranchOp::Bgt, dbit));
+        }
+        ast::Condition::Le(reg, _) => {
+            code.instr(isa::Instr::Reg(isa::RegOp::Cmp, true, *reg));
+            state.set_acc_to_val(dist, code);
+            code.instr(isa::Instr::Branch(isa::BranchOp::Bge, dbit));
+        }
+    }
+
+    Ok(())
+}
+
+fn gen_if_statm(
+    ctx: &Context,
+    state: &mut CpuState,
+    cond: &ast::Condition,
+    if_block: &ast::Block,
+    else_block: &ast::Block,
+    code: &mut Code,
+) -> Result<(), String> {
+    let (if_block, else_block, cond) = if let ast::Condition::Eq(reg, acc) = cond {
+        (else_block, if_block, ast::Condition::Neq(*reg, acc.clone()))
+    } else {
+        (if_block, else_block, cond.clone())
+    };
+
+    let mut initial_if_length = 0;
+    let mut initial_else_length = 0;
+
+    let mut current_state;
+    let mut current_code;
+    loop {
+        current_state = state.fork();
+        current_code = code.fork();
+        gen_jump_unless(
+            ctx,
+            &mut current_state,
+            &cond,
+            (initial_if_length + 1) as i8,
+            &mut current_code,
+        )?;
+        let mut else_state = current_state.fork();
+        let start = current_code.location;
+        gen_block(ctx, &mut current_state, if_block, &mut current_code)?;
+
+        let mut length;
+        if else_block.len() > 0 {
+            // Generate a fake jump, so we know its length
+            let mut ns = current_state.fork();
+            let mut nc = current_code.fork();
+            ns.set_acc_to_val((initial_else_length + 1) as u8, &mut nc);
+            nc.instr(isa::Instr::Branch(isa::BranchOp::B, false));
+            length = nc.location - start;
+
+            // Pad out with nops if necessary
+            while length < initial_if_length {
+                current_code.nop();
+                length += 1;
+            }
+
+            // Generate the actual jump
+            current_state.set_acc_to_val((initial_else_length + 1) as u8, &mut current_code);
+            current_code.instr(isa::Instr::Branch(isa::BranchOp::B, false));
+            assert_eq!(current_code.location, length + start);
         } else {
-            next_instr = None;
+            length = current_code.location - start;
+            while length < initial_if_length {
+                current_code.nop();
+                length += 1;
+            }
         }
 
-        match (instr, next_instr) {
-            (Instr::Imm(ImmOp::Imml, imml), Some(Instr::Imm(ImmOp::Immh, immh)))
-                if Some(imml | immh) == acc_state =>
-            {
-                idx += 2
+        if length > initial_if_length {
+            initial_if_length = length;
+            continue;
+        }
+
+        let start = current_code.location;
+        gen_block(ctx, &mut else_state, else_block, &mut current_code)?;
+        let mut length = current_code.location - start;
+        if length > initial_else_length {
+            initial_else_length = length;
+            continue;
+        }
+
+        while length < initial_else_length {
+            current_code.nop();
+            length += 1;
+        }
+
+        current_state.merge(&else_state);
+        break;
+    }
+
+    state.merge(&current_state);
+    code.merge(&current_code);
+
+    Ok(())
+}
+
+fn gen_jump(ctx: &Context, state: &mut CpuState, dist: i8, op: isa::BranchOp, code: &mut Code) {
+    if dist < 0 && dist > -16 {
+        let d = (dist as u8) & 0x0f;
+        state.set_acc_to_val(d, code);
+        code.instr(isa::Instr::Branch(op, true));
+    } else {
+        state.set_acc_to_val(dist as u8, code);
+        code.instr(isa::Instr::Branch(op, false));
+    }
+}
+
+fn gen_jump_from_start(
+    ctx: &Context,
+    state: &mut CpuState,
+    dist: i8,
+    op: isa::BranchOp,
+    code: &mut Code,
+) {
+    if dist > 0 {
+        gen_jump(ctx, state, dist, op, code);
+        return;
+    }
+
+    if dist > -15 {
+        let acc = ((dist - 1) as u8) & 0x0f;
+        code.imml(acc);
+        state.touched_acc = true;
+        state.acc = Some(acc);
+        code.instr(isa::Instr::Branch(op, true));
+    } else {
+        let acc = (dist - 2) as u8;
+        code.imml(acc);
+        code.immh(acc);
+        state.touched_acc = true;
+        state.acc = Some(acc);
+        code.instr(isa::Instr::Branch(op, false));
+    }
+}
+
+fn gen_loop_statm(
+    ctx: &Context,
+    state: &mut CpuState,
+    block: &ast::Block,
+    code: &mut Code,
+) -> Result<(), String> {
+    state.clobber_all(); // Can we avoid this somehow?
+    let start = code.location;
+    gen_block(ctx, state, block, code)?;
+    let length = code.location - start;
+
+    gen_jump_from_start(ctx, state, -(length as i8), isa::BranchOp::B, code);
+
+    // Currently, we never need to consider adding an implicit return
+    // when we have a loop statement, since the only way to exit
+    // a loop is to return.
+    // If we ever add a 'break' statement or 'goto' or something like that,
+    // we have to revisit this.
+    state.returned = true;
+
+    state.clobber_all();
+    Ok(())
+}
+
+fn gen_while_statm(
+    ctx: &Context,
+    state: &mut CpuState,
+    cond: &ast::Condition,
+    block: &ast::Block,
+    code: &mut Code,
+) -> Result<(), String> {
+    state.clobber_all();
+    let start = code.location;
+    gen_if_statm(ctx, state, cond, block, &ast::Block::new(), code)?;
+    let length = code.location - start;
+
+    gen_jump_from_start(ctx, state, -(length as i8), isa::BranchOp::B, code);
+
+    Ok(())
+}
+
+fn gen_reg_assign_statm(
+    ctx: &Context,
+    state: &mut CpuState,
+    reg: &isa::Reg,
+    op: &isa::RegOp,
+    acc: &ast::Acc,
+    code: &mut Code,
+) -> Result<(), String> {
+    match acc {
+        ast::Acc::Const(expr) => {
+            state.reg_op_val(*reg, op.clone(), expr.eval(&ctx.program)? as u8, code)
+        }
+        ast::Acc::Reg(src) => state.set_reg_to_reg(*reg, *src, code),
+    }
+
+    Ok(())
+}
+
+fn gen_load_statm(
+    ctx: &Context,
+    state: &mut CpuState,
+    reg: &isa::Reg,
+    acc: &ast::Acc,
+    code: &mut Code,
+) -> Result<(), String> {
+    gen_set_acc(ctx, state, acc, code)?;
+    state.reg_load(*reg, acc_get_dbit(acc, &ctx.program), code);
+    Ok(())
+}
+
+fn gen_store_statm(
+    ctx: &Context,
+    state: &mut CpuState,
+    acc: &ast::Acc,
+    reg: &isa::Reg,
+    code: &mut Code,
+) -> Result<(), String> {
+    gen_set_acc(ctx, state, acc, code)?;
+    state.reg_store(*reg, acc_get_dbit(acc, &ctx.program), code);
+    Ok(())
+}
+
+fn gen_call_statm(
+    ctx: &Context,
+    state: &mut CpuState,
+    name: &String,
+    code: &mut Code,
+) -> Result<(), String> {
+    match &ctx.function_names.get(name) {
+        None => {
+            return Err(format!("Call to undefined function {}", name));
+        }
+        Some(func_idx) => {
+            let func = &ctx.functions[**func_idx];
+
+            state.set_reg_to_val(isa::Reg::CS, ((func.addr & 0xff00) >> 8) as u8, code);
+
+            // We want to make sure we're not right at the end of a code boundary
+            while code.location % 256 > 250 {
+                code.nop();
             }
-            (Instr::Imm(ImmOp::Imml, imml), ..) if Some(imml) == acc_state => idx += 1,
-            (Instr::Imm(ImmOp::Imml, imml), ..) => {
-                acc_state = Some(imml);
-                optimized.push(ibyte);
-                idx += 1;
-            }
-            (Instr::Imm(ImmOp::Immh, immh), ..) if acc_state.is_some() => {
-                acc_state = Some(acc_state.unwrap() | immh);
-                optimized.push(ibyte);
-                idx += 1;
-            }
-            _ => {
-                optimized.push(ibyte);
-                idx += 1;
-            }
+
+            state.set_reg_to_val(isa::Reg::RV, ((code.location & 0xff00) >> 8) as u8, code);
+            state.set_acc_to_val((func.addr & 0x00ff) as u8, code);
+            code.instr(isa::Instr::Jmp(isa::JmpOp::Call, false));
+            state.merge(&func.post_state);
         }
     }
 
-    optimized
+    state.regs[isa::Reg::CS as usize] = Some(((code.location & 0xff00) >> 8) as u8);
+    Ok(())
 }
 
-fn gen_func_decl(decl: &FuncDecl, ctx: &mut Context) -> Result<(), String> {
-    gen_block(&decl.statms, ctx)
-}
+fn gen_return_statm(
+    ctx: &Context,
+    state: &mut CpuState,
+    ret: &Option<ast::Acc>,
+    code: &mut Code,
+) -> Result<(), String> {
+    if ctx.current_func().is_leaf {
+        state.set_reg_to_reg(isa::Reg::CS, isa::Reg::RV, code);
 
-fn gen_block(block: &Block, ctx: &mut Context) -> Result<(), String> {
-    if !ctx.optimize {
-        for statm in block {
-            gen_statm(statm, ctx)?;
+        match ret {
+            Some(ret) => {
+                gen_set_reg(ctx, state, isa::Reg::RV, ret, code)?;
+            }
+            _ => (),
         }
 
+        state.set_acc_to_reg(isa::Reg::RA, code);
+        code.instr(isa::Instr::Jmp(isa::JmpOp::Jmp, false));
+        state.returned = true;
         return Ok(());
     }
 
-    let mut basic_block_start = ctx.location();
-    for statm in block {
-        let is_control_flow = match statm {
-            Statm::If(..) => true,
-            Statm::Loop(..) => true,
-            Statm::While(..) => true,
-            Statm::RegAssign(..) => false,
-            Statm::Load(..) => false,
-            Statm::Store(..) => false,
-            Statm::Call(..) => true,
-            Statm::Return(..) => true,
-        };
+    state.stack_pop(isa::Reg::CS, code); // Pop return segment
 
-        if is_control_flow {
-            let mut optimized = optimize(&ctx.code[basic_block_start..]);
-            ctx.code.truncate(basic_block_start);
-            ctx.code.append(&mut optimized);
-            gen_statm(statm, ctx)?;
-            basic_block_start = ctx.location();
-        } else {
-            gen_statm(statm, ctx)?;
+    match ret {
+        Some(ret) => {
+            gen_set_reg(ctx, state, isa::Reg::RV, ret, code)?;
         }
+        _ => (),
     }
 
-    Ok(())
-}
-
-fn gen_statm(statm: &Statm, ctx: &mut Context) -> Result<(), String> {
-    match statm {
-        Statm::If(cond, a, b) => {
-            ctx.indent("If".to_string());
-            let branch_target_loc = gen_branch_if_not_cond(cond, ctx)?;
-
-            let a_start = ctx.location();
-            ctx.indent("If-block".to_string());
-            gen_block(a, ctx)?;
-            ctx.dedent();
-            let a_footer_start = ctx.location();
-            let has_b = b.len() > 0;
-            if has_b {
-                ctx.asm("imml 0");
-                ctx.asm("immh 0");
-                ctx.asm("b");
-            }
-            let a_len = ctx.location() - a_start;
-
-            ctx.patch(branch_target_loc, (a_len + 1) as u8);
-
-            if has_b {
-                let b_start = ctx.location();
-                ctx.indent("Else-block".to_string());
-                gen_block(b, ctx)?;
-                ctx.dedent();
-                let b_len = ctx.location() - b_start;
-                ctx.patch(a_footer_start, (b_len + 1) as u8);
-            }
-
-            ctx.dedent();
-        }
-        Statm::Loop(block) => {
-            ctx.indent("Loop".to_string());
-            let start = ctx.location();
-            ctx.indent("Loop-block".to_string());
-            gen_block(block, ctx)?;
-            ctx.dedent();
-            let branch_target_loc = ctx.location();
-            ctx.asm("imml 0");
-            ctx.asm("immh 0");
-            let len = ctx.location() - start;
-            ctx.asm("b");
-            ctx.patch(branch_target_loc, (!(len as u8)).wrapping_sub(2));
-            ctx.dedent();
-        }
-        Statm::While(cond, block) => {
-            ctx.indent("While".to_string());
-            let start = ctx.location();
-            let branch_target_loc = gen_branch_if_not_cond(cond, ctx)?;
-            let block_start = ctx.location();
-            ctx.indent("While-block".to_string());
-            gen_block(block, ctx)?;
-            ctx.dedent();
-            let branch_back_loc = ctx.location();
-            ctx.asm("imml 0");
-            ctx.asm("immh 0");
-            ctx.asm("b");
-
-            let len_from_block = ctx.location() - block_start;
-            let len = ctx.location() - start;
-            ctx.patch(branch_target_loc, (len_from_block + 1) as u8);
-            ctx.patch(branch_back_loc, !(len as u8).wrapping_sub(2));
-            ctx.dedent();
-        }
-        Statm::RegAssign(reg, op, acc) => {
-            gen_acc(acc, ctx)?;
-            let regop = match op {
-                AssignOp::Mov => isa::RegOp::Mov,
-                AssignOp::Add => isa::RegOp::Add,
-                AssignOp::Sub => isa::RegOp::Sub,
-                AssignOp::And => isa::RegOp::And,
-                AssignOp::Or => isa::RegOp::Or,
-                AssignOp::Shr => isa::RegOp::Shr,
-            };
-            ctx.instr(isa::Instr::Reg(regop, false, *reg));
-        }
-        Statm::Load(reg, acc) => {
-            gen_acc(acc, ctx)?;
-            match acc {
-                Acc::Const(expr) if expr_is_zero_page(expr, ctx.program) => {
-                    ctx.instr(isa::Instr::Mem(isa::MemOp::Ld, false, *reg))
-                }
-                _ => ctx.instr(isa::Instr::Mem(isa::MemOp::Ld, true, *reg)),
-            }
-        }
-        Statm::Store(acc, reg) => {
-            gen_acc(acc, ctx)?;
-            match acc {
-                Acc::Const(expr) if expr_is_zero_page(expr, ctx.program) => {
-                    ctx.instr(isa::Instr::Mem(isa::MemOp::St, false, *reg))
-                }
-                _ => ctx.instr(isa::Instr::Mem(isa::MemOp::St, true, *reg)),
-            }
-        }
-        Statm::Call(name) => {
-            ctx.gen_call(name.clone());
-        }
-        Statm::Return(val) => {
-            ctx.asm("mov acc rv");
-            ctx.asm("mov cs acc");
-            match val {
-                Some(val) => {
-                    gen_acc(val, ctx)?;
-                    ctx.asm("mov rv acc");
-                }
-                _ => (),
-            }
-
-            ctx.asm("mov acc ra");
-            ctx.asm("jmp");
-        }
-    }
-
-    Ok(())
-}
-
-fn gen_branch_if_not_cond(cond: &Condition, ctx: &mut Context) -> Result<usize, String> {
-    let acc = match cond {
-        Condition::Eq(_, acc) => acc,
-        Condition::Neq(_, acc) => acc,
-        Condition::Gt(_, acc) => acc,
-        Condition::Ge(_, acc) => acc,
-        Condition::Lt(_, acc) => acc,
-        Condition::Le(_, acc) => acc,
-    };
-
-    gen_acc(acc, ctx)?;
-
-    let target_loc;
-    match cond {
-        Condition::Eq(reg, _) => {
-            ctx.instr(isa::Instr::Reg(isa::RegOp::Cmp, false, *reg));
-            ctx.asm("imml 4");
-            ctx.asm("beq");
-            target_loc = ctx.location();
-            ctx.asm("imml 0");
-            ctx.asm("immh 0");
-            ctx.asm("b");
-        }
-
-        Condition::Neq(reg, _) => {
-            ctx.instr(isa::Instr::Reg(isa::RegOp::Cmp, false, *reg));
-            target_loc = ctx.location();
-            ctx.asm("imml 0");
-            ctx.asm("immh 0");
-            ctx.asm("beq");
-        }
-
-        Condition::Gt(reg, _) => {
-            ctx.instr(isa::Instr::Reg(isa::RegOp::Cmp, false, *reg));
-            target_loc = ctx.location();
-            ctx.asm("imml 0");
-            ctx.asm("immh 0");
-            ctx.asm("bgt");
-        }
-
-        Condition::Ge(reg, _) => {
-            ctx.instr(isa::Instr::Reg(isa::RegOp::Cmp, false, *reg));
-            target_loc = ctx.location();
-            ctx.asm("imml 0");
-            ctx.asm("immh 0");
-            ctx.asm("bge");
-        }
-
-        Condition::Lt(reg, _) => {
-            ctx.instr(isa::Instr::Reg(isa::RegOp::Cmp, true, *reg));
-            target_loc = ctx.location();
-            ctx.asm("imml 0");
-            ctx.asm("immh 0");
-            ctx.asm("bgt");
-        }
-
-        Condition::Le(reg, _) => {
-            ctx.instr(isa::Instr::Reg(isa::RegOp::Cmp, true, *reg));
-            target_loc = ctx.location();
-            ctx.asm("imml 0");
-            ctx.asm("immh 0");
-            ctx.asm("bge");
-        }
-    }
-
-    Ok(target_loc)
-}
-
-fn gen_acc(acc: &Acc, ctx: &mut Context) -> Result<(), String> {
-    match acc {
-        Acc::Reg(reg) => {
-            ctx.instr(isa::Instr::Reg(isa::RegOp::Mov, true, *reg));
-        }
-        Acc::Const(expr) => {
-            let val = expr.eval(ctx.program)?;
-            ctx.asm(&format!("imml {}", val));
-            if val > 0x0f {
-                ctx.asm(&format!("immh {}", val));
-            }
-        }
-    }
-
+    state.stack_pop(isa::Reg::RA, code); // Pop return address
+    code.instr(isa::Instr::Jmp(isa::JmpOp::Jmp, false));
+    state.returned = true;
     Ok(())
 }

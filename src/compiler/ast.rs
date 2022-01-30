@@ -37,30 +37,20 @@ pub enum Statm {
     If(Condition, Block, Block),
     Loop(Block),
     While(Condition, Block),
-    RegAssign(isa::Reg, AssignOp, Acc),
+    RegAssign(isa::Reg, isa::RegOp, Acc),
     Load(isa::Reg, Acc),
     Store(Acc, isa::Reg),
     Call(String),
     Return(Option<Acc>),
 }
 
-#[derive(Debug, PartialEq)]
-pub enum AssignOp {
-    Mov,
-    Add,
-    Sub,
-    And,
-    Or,
-    Shr,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Acc {
     Reg(isa::Reg),
     Const(ConstExpr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Condition {
     Eq(isa::Reg, Acc),
     Neq(isa::Reg, Acc),
@@ -70,7 +60,7 @@ pub enum Condition {
     Le(isa::Reg, Acc),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BinOp {
     Add,
     Sub,
@@ -80,7 +70,7 @@ pub enum BinOp {
     RShift,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ConstExpr {
     Literal(i32),
     Constant(String),

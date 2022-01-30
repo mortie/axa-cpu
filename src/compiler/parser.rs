@@ -1,3 +1,4 @@
+use super::super::isa;
 use super::ast::{self, Program};
 use super::lexer::{Lexer, TokKind, Token};
 use std::error;
@@ -71,8 +72,7 @@ fn skip(lex: &mut Lexer, expected: TokKind) -> Result<(), Error> {
 }
 
 fn decl_exists(program: &Program, name: &str) -> bool {
-    program.const_decls.contains_key(name)
-        || program.data_decls.contains_key(name)
+    program.const_decls.contains_key(name) || program.data_decls.contains_key(name)
 }
 
 pub fn parse_program(lex: &mut Lexer) -> Result<Program, Error> {
@@ -280,7 +280,7 @@ fn parse_reg_assign_statm(lex: &mut Lexer) -> Result<ast::Statm, Error> {
 
     // If there's an equals followed by asterisk, this is a load statement,
     // not actually an assign statement
-    if op == ast::AssignOp::Mov && lex.peek(0)?.kind == TokKind::Asterisk {
+    if op == isa::RegOp::Mov && lex.peek(0)?.kind == TokKind::Asterisk {
         lex.consume()?;
         let acc = parse_accumulator_value(lex)?;
         skip(lex, TokKind::Semicolon)?;
@@ -288,9 +288,9 @@ fn parse_reg_assign_statm(lex: &mut Lexer) -> Result<ast::Statm, Error> {
     }
 
     // If there's an equals followed by >>, this is a shift right statement
-    if op == ast::AssignOp::Mov && lex.peek(0)?.kind == TokKind::GtGt {
+    if op == isa::RegOp::Mov && lex.peek(0)?.kind == TokKind::GtGt {
         lex.consume()?;
-        op = ast::AssignOp::Shr;
+        op = isa::RegOp::Shr;
     }
 
     let acc = parse_accumulator_value(lex)?;
@@ -339,14 +339,14 @@ fn parse_return_statm(lex: &mut Lexer) -> Result<ast::Statm, Error> {
     Ok(ast::Statm::Return(Some(acc)))
 }
 
-fn parse_assign_op(lex: &mut Lexer) -> Result<ast::AssignOp, Error> {
+fn parse_assign_op(lex: &mut Lexer) -> Result<isa::RegOp, Error> {
     let tok = lex.consume()?;
     match tok.kind {
-        TokKind::Equals => Ok(ast::AssignOp::Mov),
-        TokKind::PlusEq => Ok(ast::AssignOp::Add),
-        TokKind::MinusEq => Ok(ast::AssignOp::Sub),
-        TokKind::AmpersandEq => Ok(ast::AssignOp::And),
-        TokKind::PipeEq => Ok(ast::AssignOp::Or),
+        TokKind::Equals => Ok(isa::RegOp::Mov),
+        TokKind::PlusEq => Ok(isa::RegOp::Add),
+        TokKind::MinusEq => Ok(isa::RegOp::Sub),
+        TokKind::AmpersandEq => Ok(isa::RegOp::And),
+        TokKind::PipeEq => Ok(isa::RegOp::Or),
         _ => Err(err_unexpected_token(&tok).into()),
     }
 }
@@ -401,7 +401,10 @@ fn parse_cond(lex: &mut Lexer) -> Result<ast::Condition, Error> {
             lex.consume()?;
             Ok(ast::Condition::Ge(reg, parse_accumulator_value(lex)?))
         }
-        _ => Ok(ast::Condition::Neq(reg, ast::Acc::Const(ast::ConstExpr::Literal(0)))),
+        _ => Ok(ast::Condition::Neq(
+            reg,
+            ast::Acc::Const(ast::ConstExpr::Literal(0)),
+        )),
     }
 }
 

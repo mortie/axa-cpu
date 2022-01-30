@@ -1,5 +1,5 @@
-use std::cell::Cell;
 use super::emulator;
+use std::cell::Cell;
 
 const DISPLAY_WIDTH: usize = 32;
 const DISPLAY_HEIGHT: usize = 32;
