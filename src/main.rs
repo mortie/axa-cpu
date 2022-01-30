@@ -81,8 +81,7 @@ fn create_file(path: &Path) -> Result<Output, String> {
     Ok((w, t))
 }
 
-fn print_asm(_gen: &compiler::codegen::Context) {
-    /*
+fn print_asm(code: &compiler::codegen::Code) {
     let mut addr = 0u16;
     let mut annotation_idx = 0;
     let mut annotation_depth = 0;
@@ -94,13 +93,13 @@ fn print_asm(_gen: &compiler::codegen::Context) {
         }
     };
 
-    for instr in &gen.code {
+    for instr in &code.code {
         loop {
-            if annotation_idx >= gen.annotations.len() {
+            if annotation_idx >= code.annotations.len() {
                 break;
             }
 
-            let (annotation_addr, annotation) = &gen.annotations[annotation_idx];
+            let (annotation_addr, annotation) = &code.annotations[annotation_idx];
             if *annotation_addr != addr {
                 break;
             }
@@ -141,7 +140,6 @@ fn print_asm(_gen: &compiler::codegen::Context) {
 
         addr += 1;
     }
-    */
 }
 
 fn ax_to_machine_code(
@@ -157,16 +155,13 @@ fn ax_to_machine_code(
 
     let gen = compiler::codegen::Context::new(program);
     let code = compiler::codegen::generate(gen)?;
-    match output.write(&code[..]) {
+    match output.write(&code.code[..]) {
         Err(err) => return Err(err.to_string()),
         _ => (),
     }
 
     if opts.do_print_asm {
-        //print_asm(&gen);
-        for idx in 0..code.len() {
-            println!("0x{:04x} {}", idx, isa::Instr::parse(code[idx]));
-        }
+        print_asm(&code);
     }
 
     Ok(())

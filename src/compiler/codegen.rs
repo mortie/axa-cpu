@@ -2,8 +2,14 @@ use super::super::isa;
 use super::ast;
 use std::collections::HashMap;
 
-struct Code {
-    code: Vec<u8>,
+pub enum Annotation {
+    Indent(String),
+    Dedent,
+}
+
+pub struct Code {
+    pub code: Vec<u8>,
+    pub annotations: Vec<(u16, Annotation)>,
     location: u16,
 }
 
@@ -11,6 +17,7 @@ impl Code {
     fn new(location: u16) -> Self {
         Self {
             code: Vec::new(),
+            annotations: Vec::new(),
             location,
         }
     }
@@ -18,17 +25,30 @@ impl Code {
     fn fork(&self) -> Self {
         Self {
             code: Vec::new(),
+            annotations: Vec::new(),
             location: self.location,
         }
     }
 
-    fn merge(&mut self, other: &Self) {
-        for ibyte in &other.code {
-            self.code.push(*ibyte);
+    fn merge(&mut self, other: Self) {
+        for ibyte in other.code {
+            self.code.push(ibyte);
             self.location += 1;
         }
 
+        for annot in other.annotations {
+            self.annotations.push(annot);
+        }
+
         assert_eq!(self.location, other.location);
+    }
+
+    fn indent(&mut self, text: String) {
+        self.annotations.push((self.location, Annotation::Indent(text)));
+    }
+
+    fn dedent(&mut self) {
+        self.annotations.push((self.location, Annotation::Dedent));
     }
 
     fn instr(&mut self, instr: isa::Instr) {
@@ -280,7 +300,6 @@ pub struct Context {
     pub program: ast::Program,
     functions: Vec<FunctionInfo>,
     function_names: HashMap<String, usize>,
-    current_func_is_leaf: bool,
 }
 
 impl Context {
@@ -289,7 +308,6 @@ impl Context {
             program,
             functions: Vec::new(),
             function_names: HashMap::new(),
-            current_func_is_leaf: false,
         }
     }
 
@@ -385,7 +403,7 @@ fn block_has_func_call(block: &ast::Block) -> bool {
     false
 }
 
-pub fn generate(mut ctx: Context) -> Result<Vec<u8>, String> {
+pub fn generate(mut ctx: Context) -> Result<Code, String> {
     let func_decls = ctx.program.func_decls;
     ctx.program.func_decls = vec![];
     let mut code = Code::new(0);
@@ -409,7 +427,7 @@ pub fn generate(mut ctx: Context) -> Result<Vec<u8>, String> {
     }
 
     ctx.program.func_decls = func_decls;
-    Ok(code.code)
+    Ok(code)
 }
 
 fn gen_function(
@@ -418,6 +436,7 @@ fn gen_function(
     decl: &ast::FuncDecl,
     code: &mut Code,
 ) -> Result<(), String> {
+    code.indent(format!("Func {}", decl.name));
     if !ctx.current_func().is_leaf {
         state.stack_push(isa::Reg::RA, code); // Push return address
         state.stack_push(isa::Reg::RV, code); // Push return segment (stored in RV)
@@ -430,6 +449,7 @@ fn gen_function(
         gen_return_statm(ctx, state, &None, code)?;
     }
 
+    code.dedent();
     Ok(())
 }
 
@@ -529,6 +549,7 @@ fn gen_if_statm(
     else_block: &ast::Block,
     code: &mut Code,
 ) -> Result<(), String> {
+    code.indent("If".to_string());
     let (if_block, else_block, cond) = if let ast::Condition::Eq(reg, acc) = cond {
         (else_block, if_block, ast::Condition::Neq(*reg, acc.clone()))
     } else {
@@ -552,7 +573,9 @@ fn gen_if_statm(
         )?;
         let mut else_state = current_state.fork();
         let start = current_code.location;
+        current_code.indent("If-block".to_string());
         gen_block(ctx, &mut current_state, if_block, &mut current_code)?;
+        current_code.dedent();
 
         let mut length;
         if else_block.len() > 0 {
@@ -586,26 +609,31 @@ fn gen_if_statm(
             continue;
         }
 
-        let start = current_code.location;
-        gen_block(ctx, &mut else_state, else_block, &mut current_code)?;
-        let mut length = current_code.location - start;
-        if length > initial_else_length {
-            initial_else_length = length;
-            continue;
+        if else_block.len() > 0 {
+            let start = current_code.location;
+            current_code.indent("Else-block".to_string());
+            gen_block(ctx, &mut else_state, else_block, &mut current_code)?;
+            current_code.dedent();
+            let mut length = current_code.location - start;
+            if length > initial_else_length {
+                initial_else_length = length;
+                continue;
+            }
+
+            while length < initial_else_length {
+                current_code.nop();
+                length += 1;
+            }
+
+            current_state.merge(&else_state);
         }
 
-        while length < initial_else_length {
-            current_code.nop();
-            length += 1;
-        }
-
-        current_state.merge(&else_state);
         break;
     }
 
     state.merge(&current_state);
-    code.merge(&current_code);
-
+    code.merge(current_code);
+    code.dedent();
     Ok(())
 }
 
@@ -654,9 +682,12 @@ fn gen_loop_statm(
     block: &ast::Block,
     code: &mut Code,
 ) -> Result<(), String> {
+    code.indent("Loop".to_string());
     state.clobber_all(); // Can we avoid this somehow?
     let start = code.location;
+    code.indent("Loop-block".to_string());
     gen_block(ctx, state, block, code)?;
+    code.dedent();
     let length = code.location - start;
 
     gen_jump_from_start(ctx, state, -(length as i8), isa::BranchOp::B, code);
@@ -669,6 +700,7 @@ fn gen_loop_statm(
     state.returned = true;
 
     state.clobber_all();
+    code.dedent();
     Ok(())
 }
 
@@ -679,6 +711,7 @@ fn gen_while_statm(
     block: &ast::Block,
     code: &mut Code,
 ) -> Result<(), String> {
+    code.indent("While".to_string());
     state.clobber_all();
     let start = code.location;
     gen_if_statm(ctx, state, cond, block, &ast::Block::new(), code)?;
@@ -686,6 +719,7 @@ fn gen_while_statm(
 
     gen_jump_from_start(ctx, state, -(length as i8), isa::BranchOp::B, code);
 
+    code.dedent();
     Ok(())
 }
 
@@ -737,6 +771,7 @@ fn gen_call_statm(
     name: &String,
     code: &mut Code,
 ) -> Result<(), String> {
+    code.indent(format!("Call {}", name));
     match &ctx.function_names.get(name) {
         None => {
             return Err(format!("Call to undefined function {}", name));
@@ -759,6 +794,7 @@ fn gen_call_statm(
     }
 
     state.regs[isa::Reg::CS as usize] = Some(((code.location & 0xff00) >> 8) as u8);
+    code.dedent();
     Ok(())
 }
 
